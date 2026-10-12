@@ -2899,7 +2899,7 @@ async fn locate_issue(
 /// names the surface that produced the path, so the validation hint can
 /// point the user back to the right flag.
 fn read_body_source(path_or_dash: &str, flag: &str) -> Result<String, PlaneError> {
-    let body = if path_or_dash == "-" {
+    let (body, from_stdin) = if path_or_dash == "-" {
         let mut buf = String::new();
         std::io::stdin().read_to_string(&mut buf).map_err(|err| {
             PlaneError::validation_with_hint(
@@ -2907,18 +2907,27 @@ fn read_body_source(path_or_dash: &str, flag: &str) -> Result<String, PlaneError
                 format!("Pipe the body into the command (e.g. `cat file | pbot comment ... {flag} -`), or pass {flag} <PATH>."),
             )
         })?;
-        buf
+        (buf, true)
     } else {
-        std::fs::read_to_string(path_or_dash).map_err(|err| {
+        let body = std::fs::read_to_string(path_or_dash).map_err(|err| {
             PlaneError::validation_with_hint(
                 format!("failed to read {path_or_dash} for {flag}: {err}"),
                 format!(
                     "Pass an existing UTF-8 file path with {flag} <PATH>, or use '-' to read stdin."
                 ),
             )
-        })?
+        })?;
+        (body, false)
     };
     if body.is_empty() {
+        if from_stdin {
+            return Err(PlaneError::validation_with_hint(
+                format!("{flag} read an empty body from stdin."),
+                format!(
+                    "Pipe a non-empty body into the command (e.g. `cat file | pbot comment ... {flag} -`), or pass {flag} <PATH> for a file."
+                ),
+            ));
+        }
         return Err(PlaneError::validation_with_hint(
             format!("{flag} <PATH> is empty."),
             format!("Pass a non-empty file with {flag} <PATH>, or pipe a body via {flag} -."),

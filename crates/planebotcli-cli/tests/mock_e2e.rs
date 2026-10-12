@@ -766,6 +766,55 @@ fn comment_create_empty_body_file_exits_5() {
 }
 
 #[test]
+fn comment_create_non_utf8_body_file_exits_5_with_flag_in_message() {
+    let mut server = Server::new();
+    mock_comment_reads(&mut server, ITEMS);
+    let post = server
+        .mock("POST", mockito::Matcher::Any)
+        .with_status(201)
+        .expect(0)
+        .create();
+    // `\xff\xfe` is not valid UTF-8 — `std::fs::read_to_string` returns
+    // `InvalidData` ("stream did not contain valid UTF-8"), which the helper
+    // wraps in `PlaneError::validation_with_hint` so the user sees a clear
+    // validation message naming the flag.
+    let file = write_temp_body("");
+
+    {
+        use std::io::Write;
+        let mut f = std::fs::File::create(&file).expect("create");
+        f.write_all(b"\xff\xfe").expect("write");
+    }
+
+    let out = run(
+        &[
+            "comment",
+            "create",
+            "DEMO-1",
+            "-p",
+            "Demo",
+            "--body-file",
+            file.to_string_lossy().as_ref(),
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert_eq!(out.status.code(), Some(5));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("--body-file"),
+        "error message should name --body-file: {err}"
+    );
+    assert!(
+        err.to_lowercase().contains("utf-8"),
+        "error message should mention the UTF-8 cause: {err}"
+    );
+    post.assert();
+    std::fs::remove_file(&file).ok();
+}
+
+#[test]
 fn comment_create_oversized_body_succeeds_via_file() {
     let mut server = Server::new();
     mock_comment_reads(&mut server, ITEMS);
