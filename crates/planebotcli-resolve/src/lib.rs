@@ -127,6 +127,7 @@ pub async fn resolve_project(query: &str, client: &PlaneClient) -> Result<Projec
         }
         None => Err(PlaneError::NotFound {
             message: format!("Project not found: {query}"),
+            hint: None,
         }),
     }
 }
@@ -167,6 +168,7 @@ pub async fn resolve_user_query(
     }
     Err(PlaneError::NotFound {
         message: format!("User not found: {query}"),
+        hint: None,
     })
 }
 
@@ -267,6 +269,7 @@ pub async fn locate_work_item_in_project(
         .collect();
     match_work_item(query, &candidates).ok_or_else(|| PlaneError::NotFound {
         message: format!("Work item not found: {query}"),
+        hint: None,
     })
 }
 
@@ -292,6 +295,7 @@ pub async fn locate_work_item_across(
         .collect();
     match_work_item(query, &refs).ok_or_else(|| PlaneError::NotFound {
         message: format!("Work item not found: {query}"),
+        hint: None,
     })
 }
 

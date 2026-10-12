@@ -20,6 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `apt install ./planebotcli-cli_<version>_amd64.deb` snippet.
 
 ### Fixed
+- `pbot doc show <doc>` without `-p <project>` no longer surfaces a bare
+  `Error: Resource not found (HTTP 404).` that reads as "my UUID/name is
+  wrong". The v1 API only serves project-scoped pages, so omitting `-p`
+  hits a workspace-level route the server does not provide; the command
+  now keeps the 404 message and adds a hint naming `-p <project>` (exit
+  code 3 is unchanged). `doc show --help` no longer promises a
+  workspace-level lookup that the API cannot serve; the project-scoped
+  path is byte-for-byte unchanged.
 - Windows `.msi` installer restored. The v1.4.x release intentionally
   dropped `msi` because cargo-dist 0.32's plan step could not detect
   `[package.metadata.wix]` GUIDs in planebotcli-cli's Cargo.toml. Instead

@@ -13,7 +13,10 @@ pub enum PlaneError {
     #[error("{message}")]
     Auth { message: String },
     #[error("{message}")]
-    NotFound { message: String },
+    NotFound {
+        message: String,
+        hint: Option<String>,
+    },
     #[error("{message}")]
     Api { message: String },
     #[error("{message}")]
@@ -38,7 +41,7 @@ impl PlaneError {
 
     pub fn hint(&self) -> Option<&str> {
         match self {
-            Self::Validation { hint, .. } => hint.as_deref(),
+            Self::Validation { hint, .. } | Self::NotFound { hint, .. } => hint.as_deref(),
             _ => None,
         }
     }
@@ -52,6 +55,13 @@ impl PlaneError {
 
     pub fn validation_with_hint(message: impl Into<String>, hint: impl Into<String>) -> Self {
         Self::Validation {
+            message: message.into(),
+            hint: Some(hint.into()),
+        }
+    }
+
+    pub fn not_found_with_hint(message: impl Into<String>, hint: impl Into<String>) -> Self {
+        Self::NotFound {
             message: message.into(),
             hint: Some(hint.into()),
         }

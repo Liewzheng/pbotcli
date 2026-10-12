@@ -1379,6 +1379,7 @@ pub fn map_api_error(status: reqwest::StatusCode, body: &str) -> PlaneError {
         },
         404 => PlaneError::NotFound {
             message: "Resource not found (HTTP 404).".into(),
+            hint: None,
         },
         429 => PlaneError::Api {
             message: "Rate limited by Plane API after multiple retries. Try again later.".into(),
