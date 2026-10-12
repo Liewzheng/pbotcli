@@ -11,13 +11,51 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// A workspace member / user, as returned by `/api/v1/users/me/`.
+///
+/// A service-principal credential has no person fields: the server answers with
+/// `name` and `type: "service_principal"` instead. Both are kept, otherwise the
+/// identity is dropped and `whoami` renders a block of blanks.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
     pub id: String,
+    pub name: Option<String>,
+    #[serde(rename = "type")]
+    pub kind: Option<String>,
     pub display_name: Option<String>,
     pub first_name: Option<String>,
     pub last_name: Option<String>,
     pub email: Option<String>,
+}
+
+impl User {
+    /// The name to show for this identity: a service principal's `name` first,
+    /// then `display_name`, then `first_name last_name`.
+    pub fn display_label(&self) -> String {
+        for candidate in [self.name.as_deref(), self.display_name.as_deref()] {
+            if let Some(name) = candidate.filter(|s| !s.is_empty()) {
+                return name.to_string();
+            }
+        }
+        [self.first_name.as_deref(), self.last_name.as_deref()]
+            .into_iter()
+            .flatten()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// True when the server sent at least one person field.
+    pub fn has_person_fields(&self) -> bool {
+        [
+            self.display_name.as_deref(),
+            self.first_name.as_deref(),
+            self.last_name.as_deref(),
+            self.email.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|s| !s.is_empty())
+    }
 }
 
 /// A member row of `/api/v1/workspaces/{ws}/members/`.
@@ -441,5 +479,39 @@ impl Attachment {
                     .filter(|v| !v.is_null())
             })
             .cloned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn user(json: &str) -> User {
+        serde_json::from_str(json).expect("valid user json")
+    }
+
+    #[test]
+    fn service_principal_identity_is_kept() {
+        let me = user(r#"{"id":"sp1","name":"kimicode-bot","type":"service_principal"}"#);
+        assert_eq!(me.display_label(), "kimicode-bot");
+        assert_eq!(me.kind.as_deref(), Some("service_principal"));
+        assert!(!me.has_person_fields());
+    }
+
+    #[test]
+    fn display_label_prefers_the_person_fields_over_nothing() {
+        let me = user(
+            r#"{"id":"u1","display_name":"Jicai Liu","first_name":"Jicai","last_name":"Liu","email":"j@x"}"#,
+        );
+        assert_eq!(me.display_label(), "Jicai Liu");
+        assert!(me.has_person_fields());
+    }
+
+    #[test]
+    fn display_label_falls_back_to_first_and_last() {
+        let me = user(r#"{"id":"u2","first_name":"Jicai","last_name":"Liu"}"#);
+        assert_eq!(me.display_label(), "Jicai Liu");
+        let nameless = user(r#"{"id":"u3","first_name":"","last_name":""}"#);
+        assert_eq!(nameless.display_label(), "");
     }
 }

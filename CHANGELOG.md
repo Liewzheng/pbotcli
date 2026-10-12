@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `apt install ./planebotcli-cli_<version>_amd64.deb` snippet.
 
 ### Fixed
+- `pbot whoami` renders a service-principal credential instead of a block of
+  blanks. `User` kept only the person fields, so an SP — which the server
+  describes with `name` and `type: "service_principal"` — came back as an id
+  plus four empty rows. The table now shows the resolved `name` and, when the
+  server sends one, the `type`; the `--json` object gains those two keys and no
+  existing key changes.
 - Windows `.msi` installer restored. The v1.4.x release intentionally
   dropped `msi` because cargo-dist 0.32's plan step could not detect
   `[package.metadata.wix]` GUIDs in planebotcli-cli's Cargo.toml. Instead
