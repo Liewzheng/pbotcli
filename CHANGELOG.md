@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   page; README's Linux section gained an
   `apt install ./planebotcli-cli_<version>_amd64.deb` snippet.
 
+### Changed
+- `--version` and the first line of `--help` no longer describe the CLI as a Plane
+  tool. `crates/planebotcli-cli/src/lib.rs`'s clap `Cli` struct now names the binary
+  `pbot` (`--version` prints `pbot 1.4.2` regardless of whether the binary is invoked
+  as `pbot` or `planebotcli`) and uses the about line `Command-line client for your
+  pbot workspace.`. `skill/SKILL.md` was not touched: it does not quote either
+  string verbatim, and its frontmatter `version` (1.4.2) still matches
+  `workspace.package.version`, so no bump is needed.
+
 ### Fixed
 - Windows `.msi` installer restored. The v1.4.x release intentionally
   dropped `msi` because cargo-dist 0.32's plan step could not detect

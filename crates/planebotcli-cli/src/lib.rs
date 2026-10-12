@@ -41,9 +41,9 @@ use serde_json::{Value, json};
 
 #[derive(Parser)]
 #[command(
-    name = "planebotcli",
+    name = "pbot",
     version,
-    about = "CLI for Plane.so project management."
+    about = "Command-line client for your pbot workspace."
 )]
 pub struct Cli {
     /// Output JSON to stdout instead of a table on stderr.
