@@ -30,3 +30,4 @@ tokio = { workspace = true }
 
 [dev-dependencies]
 mockito = "1"
+planebotcli-html = { path = "../planebotcli-html" }

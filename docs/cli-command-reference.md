@@ -392,23 +392,33 @@ Add a comment.
 **Aliases** `new`
 
 ```
-pbot comment create <issue> (-b <text> | --body-md <markdown>) [-p <project>] [--json]
+pbot comment create <issue> (-b <text> | --body-md <markdown> | --body-file <PATH> | --body-md-file <PATH>) [-p <project>] [--json]
 ```
+
+Exactly one of `-b` / `--body-md` / `--body-file` / `--body-md-file` is required — passing two
+fails at parse time (no request is sent). `--body-file` and `--body-md-file` accept a literal
+path (`./-` stays a file named `-`); pass `-` to read the body from stdin (for example
+`pbot wi show ABC-1 | pbot comment create ABC-2 --body -`). Use these for bodies past the
+kernel single-argument cap (~130 KB).
 
 **Options**
 
 | Option | Description |
 |---|---|
 | `-b, --body <text>` | Comment text as plain text (paragraphs, `code`, bare URLs converted to HTML). |
-| `--body-md <markdown>` | Comment text as native markdown. Mutually exclusive with `-b`. |
+| `--body-md <markdown>` | Comment text as native markdown. Mutually exclusive with the other body flags. |
+| `--body-file <PATH>` | Read the plain-text body from a UTF-8 file (`-` reads stdin). Equivalent to `--body "$(cat PATH)"`. Mutually exclusive with the other body flags. |
+| `--body-md-file <PATH>` | Read the markdown body from a UTF-8 file (`-` reads stdin). Equivalent to `--body-md "$(cat PATH)"`. Mutually exclusive with the other body flags. |
 
 ### pbot comment update
 
 Update a comment.
 
 ```
-pbot comment update <comment-id> --issue <issue> (-b <text> | --body-md <markdown>) [--json]
+pbot comment update <comment-id> --issue <issue> (-b <text> | --body-md <markdown> | --body-file <PATH> | --body-md-file <PATH>) [--json]
 ```
+
+The four body flags are mutually exclusive (see `comment create`).
 
 ### pbot comment delete
 

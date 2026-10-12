@@ -16,10 +16,11 @@ pub const SKILL_MD: &str = include_str!("../../../skill/SKILL.md");
 const SKILL_MD_REPO_PATH: &str = "skill/SKILL.md";
 
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use clap::{Parser, Subcommand};
+use clap::{ArgGroup, Parser, Subcommand};
 use planebotcli_cache::Cache;
 use planebotcli_client::{PageScope, PlaneClient};
 use planebotcli_core::{PlaneError, config_file_path, load_config, save_config};
@@ -201,23 +202,45 @@ pub enum CommentCmd {
         limit: Option<usize>,
     },
     /// Add a comment to a work item.
+    #[command(group(
+        ArgGroup::new("comment_body")
+            .required(true)
+            .multiple(false)
+            .args(["body", "body_md", "body_file", "body_md_file"])
+    ))]
     Create {
         /// Work item identifier (ABC-123), UUID, or name.
         issue: String,
         /// Comment text (plain text, converted to HTML). Exactly one of
-        /// --body or --body-md is required.
+        /// --body / --body-md / --body-file / --body-md-file is required.
         #[arg(long, short = 'b')]
         body: Option<String>,
         /// Comment text in a markdown subset: headings, lists, fenced and
         /// inline code, bold/italic, auto-linked URLs — converted to HTML.
-        /// Mutually exclusive with --body.
+        /// Mutually exclusive with the other body flags.
         #[arg(long)]
         body_md: Option<String>,
+        /// Path to a UTF-8 file whose contents are the plain-text body
+        /// (equivalent to `--body "$(cat PATH)"`). Pass `-` to read the body
+        /// from stdin. Mutually exclusive with the other body flags.
+        #[arg(long, value_name = "PATH")]
+        body_file: Option<PathBuf>,
+        /// Path to a UTF-8 file whose contents are the markdown body
+        /// (equivalent to `--body-md "$(cat PATH)"`). Pass `-` to read the
+        /// body from stdin. Mutually exclusive with the other body flags.
+        #[arg(long, value_name = "PATH")]
+        body_md_file: Option<PathBuf>,
         /// Project name/ID (required for name-based lookup).
         #[arg(long, short = 'p')]
         project: Option<String>,
     },
     /// Update a comment on a work item.
+    #[command(group(
+        ArgGroup::new("comment_body")
+            .required(true)
+            .multiple(false)
+            .args(["body", "body_md", "body_file", "body_md_file"])
+    ))]
     Update {
         /// Comment UUID.
         comment_id: String,
@@ -225,14 +248,24 @@ pub enum CommentCmd {
         #[arg(long)]
         issue: String,
         /// New comment text (plain text, converted to HTML). Exactly one of
-        /// --body or --body-md is required.
+        /// --body / --body-md / --body-file / --body-md-file is required.
         #[arg(long, short = 'b')]
         body: Option<String>,
         /// New comment text in a markdown subset: headings, lists, fenced and
         /// inline code, bold/italic, auto-linked URLs — converted to HTML.
-        /// Mutually exclusive with --body.
+        /// Mutually exclusive with the other body flags.
         #[arg(long)]
         body_md: Option<String>,
+        /// Path to a UTF-8 file whose contents are the new plain-text body
+        /// (equivalent to `--body "$(cat PATH)"`). Pass `-` to read the body
+        /// from stdin. Mutually exclusive with the other body flags.
+        #[arg(long, value_name = "PATH")]
+        body_file: Option<PathBuf>,
+        /// Path to a UTF-8 file whose contents are the new markdown body
+        /// (equivalent to `--body-md "$(cat PATH)"`). Pass `-` to read the
+        /// body from stdin. Mutually exclusive with the other body flags.
+        #[arg(long, value_name = "PATH")]
+        body_md_file: Option<PathBuf>,
         /// Project name/ID (required for name-based lookup).
         #[arg(long, short = 'p')]
         project: Option<String>,
@@ -1188,21 +1221,16 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                 issue,
                 body,
                 body_md,
+                body_file,
+                body_md_file,
                 project,
             } => {
-                let markdown = body_md.is_some();
-                if body.is_some() && markdown {
-                    return Err(PlaneError::validation_with_hint(
-                        "--body and --body-md are mutually exclusive.",
-                        "Pass the comment text via only one of them.",
-                    ));
-                }
-                let Some(body) = body.or(body_md) else {
-                    return Err(PlaneError::validation_with_hint(
-                        "One of --body or --body-md is required.",
-                        "Example: planebotcli comment create PROJ-1 --body-md '## Notes'",
-                    ));
-                };
+                let (body, markdown) = resolve_comment_body(
+                    body.as_deref(),
+                    body_md.as_deref(),
+                    body_file.as_deref(),
+                    body_md_file.as_deref(),
+                )?;
                 cmd_comment_write(
                     &client,
                     &issue,
@@ -1219,21 +1247,16 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                 issue,
                 body,
                 body_md,
+                body_file,
+                body_md_file,
                 project,
             } => {
-                let markdown = body_md.is_some();
-                if body.is_some() && markdown {
-                    return Err(PlaneError::validation_with_hint(
-                        "--body and --body-md are mutually exclusive.",
-                        "Pass the comment text via only one of them.",
-                    ));
-                }
-                let Some(body) = body.or(body_md) else {
-                    return Err(PlaneError::validation_with_hint(
-                        "One of --body or --body-md is required.",
-                        "Example: planebotcli comment update COMMENT-ID ISSUE --body-md '## Notes'",
-                    ));
-                };
+                let (body, markdown) = resolve_comment_body(
+                    body.as_deref(),
+                    body_md.as_deref(),
+                    body_file.as_deref(),
+                    body_md_file.as_deref(),
+                )?;
                 cmd_comment_write(
                     &client,
                     &issue,
@@ -2865,6 +2888,91 @@ async fn locate_issue(
             Ok(found)
         }
         None => locate_work_item_across(issue, client).await,
+    }
+}
+
+/// Read the comment body from a path / std-in token.
+///
+/// `path_or_dash == "-"` reads stdin to EOF (a `--body -` / `--body-md -`
+/// pipeline); any other token is treated as a literal file path. `./-` is
+/// therefore a file literally named `-`, not stdin. The `flag` argument
+/// names the surface that produced the path, so the validation hint can
+/// point the user back to the right flag.
+fn read_body_source(path_or_dash: &str, flag: &str) -> Result<String, PlaneError> {
+    let body = if path_or_dash == "-" {
+        let mut buf = String::new();
+        std::io::stdin().read_to_string(&mut buf).map_err(|err| {
+            PlaneError::validation_with_hint(
+                format!("failed to read stdin for {flag}: {err}"),
+                format!("Pipe the body into the command (e.g. `cat file | pbot comment ... {flag} -`), or pass {flag} <PATH>."),
+            )
+        })?;
+        buf
+    } else {
+        std::fs::read_to_string(path_or_dash).map_err(|err| {
+            PlaneError::validation_with_hint(
+                format!("failed to read {path_or_dash} for {flag}: {err}"),
+                format!(
+                    "Pass an existing UTF-8 file path with {flag} <PATH>, or use '-' to read stdin."
+                ),
+            )
+        })?
+    };
+    if body.is_empty() {
+        return Err(PlaneError::validation_with_hint(
+            format!("{flag} <PATH> is empty."),
+            format!("Pass a non-empty file with {flag} <PATH>, or pipe a body via {flag} -."),
+        ));
+    }
+    Ok(body)
+}
+
+/// Combine the four `comment create` / `comment update` body sources into
+/// the `(body, markdown)` pair `cmd_comment_write` consumes.
+///
+/// The clap `ArgGroup("comment_body")` with `required(true)` and
+/// `multiple(false)` enforces "exactly one of the four" at parse time —
+/// any other shape fails clap's parse and never reaches this function. The
+/// `_ =>` arm is a defensive validation so a loosened group never panics.
+///
+/// `--body -` and `--body-md -` (the only way to feed a body through a
+/// pipeline) look identical to `--body "x"` / `--body-md "x"` at parse
+/// time, so we detect the literal `-` here and route it through the same
+/// stdin-reading helper as the file flags. `--body "./-"` stays a literal
+/// path because the path argument never reduces to a single `-`.
+fn resolve_comment_body(
+    body: Option<&str>,
+    body_md: Option<&str>,
+    body_file: Option<&Path>,
+    body_md_file: Option<&Path>,
+) -> Result<(String, bool), PlaneError> {
+    match (body, body_md, body_file, body_md_file) {
+        (Some(text), None, None, None) => {
+            if text == "-" {
+                Ok((read_body_source("-", "--body")?, false))
+            } else {
+                Ok((text.to_string(), false))
+            }
+        }
+        (None, Some(text), None, None) => {
+            if text == "-" {
+                Ok((read_body_source("-", "--body-md")?, true))
+            } else {
+                Ok((text.to_string(), true))
+            }
+        }
+        (None, None, Some(path), None) => Ok((
+            read_body_source(path.to_string_lossy().as_ref(), "--body-file")?,
+            false,
+        )),
+        (None, None, None, Some(path)) => Ok((
+            read_body_source(path.to_string_lossy().as_ref(), "--body-md-file")?,
+            true,
+        )),
+        _ => Err(PlaneError::validation_with_hint(
+            "exactly one of --body / --body-md / --body-file / --body-md-file is required.",
+            "Pass the comment text via exactly one of those four flags.",
+        )),
     }
 }
 
