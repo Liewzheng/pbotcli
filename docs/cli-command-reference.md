@@ -749,7 +749,7 @@ pbot doc create --title <title>
 | `--content-raw <text>` | Content as plain text: blank lines separate paragraphs, single newlines become `<br/>`. Markdown syntax (`#`, `-`, `*`, `[ ]`) is treated literally. This is what `--content` did before v1.4.0. |
 | `--content-html <html>` | Content as raw HTML, stored verbatim (rich layout). |
 | `-p, --project <name\|id>` | Project; omit to create a workspace page. |
-| `--dry-run` | Report the target and every image verdict without writing anything; exits non-zero when an image is missing or its MIME is not allowed. |
+| `--dry-run` | Report the target and every image verdict without writing anything; exits non-zero when an image is missing or its MIME is not allowed. References the grammar rejects are listed under `unprocessed` and counted in the summary — they do not change the exit code. |
 
 The four content inputs are mutually exclusive.
 

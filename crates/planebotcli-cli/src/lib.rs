@@ -4190,8 +4190,10 @@ fn classify_image_src(src: &str) -> ImageSource {
 }
 
 /// Percent-decode `%XX` escapes the way a browser resolves an `img src`, so
-/// `file:///tmp/a%20b.png` finds the file on disk. A `%` that is not a valid
-/// escape is kept verbatim, so a path that literally contains one still works.
+/// `file:///tmp/a%20b.png` finds the file on disk. An escape that is not valid
+/// hex — or whose byte would leave the path invalid UTF-8 — is kept verbatim,
+/// so a literal `%` still works and no path is silently rewritten into a
+/// different one.
 fn percent_decode(src: &str) -> String {
     let bytes = src.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -4205,7 +4207,10 @@ fn percent_decode(src: &str) -> String {
         out.push(bytes[i]);
         i += 1;
     }
-    String::from_utf8_lossy(&out).into_owned()
+    // A decoded path that is not valid UTF-8 names no file this CLI can open;
+    // leaving the escapes as written keeps the failure honest and visible
+    // instead of substituting U+FFFD and hiding the difference.
+    String::from_utf8(out).unwrap_or_else(|_| src.to_string())
 }
 
 /// Decode the `%XX` escape starting at `start`, or `None` when the bytes there
@@ -4333,8 +4338,10 @@ fn find_raw_image_spans(line: &str) -> Vec<RawImageSpan> {
 /// Split an `<…>`-wrapped src into its value and whether brackets were present.
 ///
 /// `<` and `>` are one byte each, so the slicing is on character boundaries.
+/// `<>` counts as wrapped with an empty value, which the caller rejects as such
+/// rather than trying to read a file literally named `<>`.
 fn split_angle(inner: &str) -> (&str, bool) {
-    if inner.len() > 2 && inner.starts_with('<') && inner.ends_with('>') {
+    if inner.len() >= 2 && inner.starts_with('<') && inner.ends_with('>') {
         (&inner[1..inner.len() - 1], true)
     } else {
         (inner, false)
@@ -4355,6 +4362,9 @@ fn image_reject_reason(inner: &str) -> Option<&'static str> {
         return Some("the src is empty");
     }
     if wrapped {
+        if src.contains('<') || src.contains('>') {
+            return Some("the src has angle brackets of its own");
+        }
         return match classify_image_src(src) {
             ImageSource::Local(_) => None,
             _ => Some("angle brackets are only accepted around a local file path"),
@@ -4362,7 +4372,7 @@ fn image_reject_reason(inner: &str) -> Option<&'static str> {
     }
     if src.chars().any(char::is_whitespace) {
         return Some(
-            "the src must be one token — wrap a local path in <…> or percent-encode its spaces",
+            "the src must be one token (wrap a local path in <…> or percent-encode its spaces)",
         );
     }
     None
@@ -4419,6 +4429,13 @@ fn warn_skipped_images(skipped: &[SkippedImage]) {
             image.line, image.raw, image.reason
         );
     }
+}
+
+/// Warn about the references in `md` the image grammar rejects — the single
+/// entry point both content commands use, so the scan and the wording cannot
+/// drift apart.
+fn warn_rejected_images(md: &str) {
+    warn_skipped_images(&scan_skipped_images(md));
 }
 
 /// All `![alt](src)` occurrences on one line, with the line number attached.
@@ -4769,7 +4786,7 @@ async fn cmd_doc_create(
     // A reference the grammar rejects stays literal markdown on the page. Say
     // so before anything is written: a silent skip reads as a successful embed.
     if let Some(md) = content {
-        warn_skipped_images(&scan_skipped_images(md));
+        warn_rejected_images(md);
     }
     // A markdown body with local images needs the page id before uploading, so
     // the page is created first and patched once the assets exist (the same
@@ -4862,7 +4879,7 @@ async fn cmd_doc_update(
     // A reference the grammar rejects stays literal markdown on the page. Say
     // so before the update is sent: a silent skip reads as a successful embed.
     if let Some(md) = content {
-        warn_skipped_images(&scan_skipped_images(md));
+        warn_rejected_images(md);
     }
     let mut write = PageWrite::default();
     // Title uses truthiness like the Python `if title:`, so `--title ""` is
@@ -6365,6 +6382,33 @@ mod tests {
         assert_eq!(percent_decode("/tmp/a%zz.png"), "/tmp/a%zz.png");
         assert_eq!(percent_decode("/tmp/a%2.png"), "/tmp/a%2.png");
         assert_eq!(percent_decode("/tmp/图%20片.png"), "/tmp/图 片.png");
+        // A byte that would leave the path invalid UTF-8 is not decoded either:
+        // substituting U+FFFD would point the lookup at a different path.
+        assert_eq!(percent_decode("/tmp/a%FFb.png"), "/tmp/a%FFb.png");
+        assert_eq!(percent_decode("/tmp/a%FFb%20c.png"), "/tmp/a%FFb%20c.png");
+    }
+
+    #[test]
+    fn angle_wrapped_edge_cases_are_rejected() {
+        // `<>` is empty rather than a file named "<>", and a nested bracket
+        // cannot be expressed in the bracketed form.
+        let skipped = scan_skipped_images("![a](<>) ![b](<x y>z.png>)");
+        assert_eq!(skipped.len(), 2);
+        assert!(skipped[0].reason.contains("empty"), "{}", skipped[0].reason);
+        assert!(
+            skipped[1].reason.contains("angle brackets of its own"),
+            "{}",
+            skipped[1].reason
+        );
+    }
+
+    #[test]
+    fn dry_run_report_counts_errors_and_unprocessed_together() {
+        let md = "![m](./definitely-missing.png) ![s](file:///tmp/x/a b.png)";
+        let (report, errors) =
+            render_image_report("t", &scan_md_images(md), &scan_skipped_images(md));
+        assert_eq!(errors, 1);
+        assert!(report.contains("1 error(s), 1 unprocessed"), "{report}");
     }
 
     #[test]
