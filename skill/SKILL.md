@@ -195,7 +195,7 @@ returned uuid into the markdown body:
 ```
 pbot attachment attach -p "Project" ABC-123 -f ./shot.png --json   # get uuid
 pbot comment create ABC-123 --body-md "see ![shot](YOUR_ASSET_UUID)" --json   # YOUR_ASSET_UUID = the uuid above
-pbot comment create ABC-123 --body-md "see ![one](UUID_ONE) and ![two](UUID_TWO)" --json
+pbot comment create ABC-123 --body-md "see ![one](UUID_ONE) and ![two](UUID_TWO)" --json   # one uuid from each attach
 ```
 
 The markdown destination between the parentheses must be the bare asset
