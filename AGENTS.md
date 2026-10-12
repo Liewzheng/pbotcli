@@ -8,17 +8,18 @@ implementation it replaced has been removed, and the documents that describe it 
 
 ## Identity
 
-This project is **not a fork, a port, or a downstream of `plane-cli`**, and `plane-cli` is not its
-upstream. `pbot` began from that codebase and has since evolved on its own; the two have no
-relationship to maintain.
+This project is **not a fork, a port, or a downstream of any other CLI project**, and no other CLI
+project is its upstream. `pbot` began from the Python-era codebase this repository once held and has
+since evolved on its own; there is no relationship left to maintain.
 
 - The only home is `github.com/Liewzheng/planebotcli`. There is nowhere to sync from and nobody to
   send pull requests to.
 - Do not reintroduce the vocabulary of a fork: no "upstream", no "syncing with upstream", no PRs
   against another repository, no mirroring branches back and forth.
-- Historical references (`plane-cli`, the Python line, the ADRs written for it) stay as history and
-  as provenance; they are not a live dependency or a source of incoming changes.
-- New work is judged on its own merits — what `pbot` should be — not on parity with `plane-cli`.
+- Historical references (the removed Python line, the ADRs written for it) stay as history and as
+  provenance; they are not a live dependency or a source of incoming changes.
+- New work is judged on its own merits — what `pbot` should be — not on parity with the codebase this
+  project grew out of.
 
 ## Language
 

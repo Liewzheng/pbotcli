@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   page; README's Linux section gained an
   `apt install ./planebotcli-cli_<version>_amd64.deb` snippet.
 
+### Changed
+- The skill and `AGENTS.md` no longer name the Python-era CLI this project replaced:
+  `skill/SKILL.md`'s trigger list is now `Plane` / `pbot` / `planebotcli` (the old name
+  would have made an agent treat a removed tool as a live entry point), and `AGENTS.md`'s
+  Identity section states the relationship to that removed codebase — not a fork, no
+  upstream, history kept as provenance — without pointing at it by name.
+
 ### Fixed
 - Windows `.msi` installer restored. The v1.4.x release intentionally
   dropped `msi` because cargo-dist 0.32's plan step could not detect

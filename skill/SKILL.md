@@ -1,6 +1,6 @@
 ---
 name: pbot
-description: "Manage Plane.so through the pbot / planebotcli CLI — work items, projects, cycles/sprints, modules, labels, states, documents, intake queue, comments, relations. Use when the user mentions Plane, pbot, planebotcli, planecli, or a work-item identifier like ABC-123, or asks about tasks, sprints, or backlogs in a project where Plane is the tracker."
+description: "Manage Plane.so through the pbot / planebotcli CLI — work items, projects, cycles/sprints, modules, labels, states, documents, intake queue, comments, relations. Use when the user mentions Plane, pbot, planebotcli, or a work-item identifier like ABC-123, or asks about tasks, sprints, or backlogs in a project where Plane is the tracker."
 allowed-tools: Bash(pbot *, planebotcli *)
 metadata:
   author: planebotcli maintainers
