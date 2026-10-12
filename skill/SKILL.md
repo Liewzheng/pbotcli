@@ -194,14 +194,16 @@ returned uuid into the markdown body:
 
 ```
 pbot attachment attach -p "Project" ABC-123 -f ./shot.png --json   # get uuid
-pbot comment create ABC-123 --body-md "see ![shot](./uuid)" --json
+pbot comment create ABC-123 --body-md "see ![shot](3f2a1b4c-5d6e-7f80-91a2-b3c4d5e6f708)" --json
 ```
 
 The web side parses the `src` value as a literal asset uuid only — a
-relative path like `./shot.png` will not resolve. To embed multiple
-images, repeat the `<img src='<uuid>'/>` markup in the body string
-(or use a temp file for the `--body "$(cat file)"` pattern shown
-below). For binary content like a PDF, link the asset via
+relative path like `./shot.png` will not resolve, so put the bare uuid
+between the parentheses. For several images repeat the markdown image
+syntax once per image, `![one](<uuid>) ![two](<uuid>)`. A raw
+`<img src='<uuid>'/>` tag does **not** work: `--body-md` escapes HTML
+into literal text, so the tag would appear on the page as words rather
+than as a picture. For binary content like a PDF, link the asset via
 `attachment ls` + a Markdown link with the uuid as the destination
 rather than trying to inline the file.
 
