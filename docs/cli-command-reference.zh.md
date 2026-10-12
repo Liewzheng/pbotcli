@@ -763,6 +763,12 @@ pbot doc create --title <title>
 该引用会以字面 markdown 留在页面上，同时 pbot 在 stderr 给出告警。`--dry-run` 会把它们
 列在 `unprocessed` 下并计入汇总行，避免报告读起来像「一切正常」。
 
+告警与报告是**给人读的，不是机器契约**：告警形如
+`warning: line N: … was not uploaded — <原因>; it will stay literal markdown on the page`，
+汇总行为 `summary: N to upload, N kept, N error(s), N unprocessed`。`--json` 返回的是页面对象，
+两者都不包含 —— 脚本要判断「有引用未被处理」，请解析 `--dry-run` 的汇总行。
+`doc update --dry-run` 使用同一套图片文法与报告。
+
 **示例**
 
 ```

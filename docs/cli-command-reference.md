@@ -769,6 +769,16 @@ literal Markdown on the page and `pbot` says so on stderr. `--dry-run` lists
 those under `unprocessed` and counts them in its summary, so a report cannot read
 as clean while the page is about to keep raw `![…](…)` text.
 
+Both the warning and the report are **human-readable, not a machine contract**:
+the warning is `warning: line N: <reference> was not uploaded — <reason>; it will
+stay literal markdown on the page`, and the summary is
+`summary: N to upload, N kept, N error(s), N unprocessed`. `--json` returns the
+page object and does not carry either — scripts that must detect an unhandled
+reference should parse the `--dry-run` summary or check the stored body.
+
+`doc update --dry-run` uses the same target page and the same image grammar and
+report as `doc create`.
+
 **Examples**
 
 ```

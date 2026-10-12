@@ -4305,6 +4305,11 @@ struct RawImageSpan {
 }
 
 /// All `![alt](inner)` occurrences on one line, whatever `inner` holds.
+///
+/// A span ends at the first `]` that is followed by `(`, then at the first `)`:
+/// the shape the converter's regex accepts. An alt text carrying its own bracket
+/// (`![a[b]](x)`) is therefore not recognised here either — the converter leaves
+/// it literal too, so the two stay in step.
 fn find_raw_image_spans(line: &str) -> Vec<RawImageSpan> {
     let mut spans = Vec::new();
     let mut cursor = 0;
@@ -4371,11 +4376,28 @@ fn image_reject_reason(inner: &str) -> Option<&'static str> {
         };
     }
     if src.chars().any(char::is_whitespace) {
-        return Some(
-            "the src must be one token (wrap a local path in <…> or percent-encode its spaces)",
-        );
+        // A `"title"` after the src is a different mistake with a different fix:
+        // no amount of quoting or encoding makes it uploadable.
+        return Some(if has_title_suffix(inner) {
+            "a title suffix is not supported — drop the quoted part after the src"
+        } else {
+            "the src must be one token (wrap a local path in <…> or percent-encode its spaces)"
+        });
     }
     None
+}
+
+/// True when the text after the first whitespace-separated token is a
+/// CommonMark title — `"…"`, `'…'` or `(…)`.
+fn has_title_suffix(inner: &str) -> bool {
+    let Some((_, rest)) = inner.trim().split_once(char::is_whitespace) else {
+        return false;
+    };
+    let rest = rest.trim();
+    rest.len() >= 2
+        && ((rest.starts_with('"') && rest.ends_with('"'))
+            || (rest.starts_with('\'') && rest.ends_with('\''))
+            || (rest.starts_with('(') && rest.ends_with(')')))
 }
 
 /// All `![alt](src)` occurrences on one line that the grammar accepts.
@@ -4424,9 +4446,12 @@ fn scan_skipped_images(md: &str) -> Vec<SkippedImage> {
 /// reads as a successful embed.
 fn warn_skipped_images(skipped: &[SkippedImage]) {
     for image in skipped {
+        // The span is user-supplied and lands on the operator's terminal, where
+        // an escape sequence could rewrite the line — drop control characters.
+        let raw: String = image.raw.chars().filter(|c| !c.is_control()).collect();
         eprintln!(
             "warning: line {}: {} was not uploaded — {}; it will stay literal markdown on the page",
-            image.line, image.raw, image.reason
+            image.line, raw, image.reason
         );
     }
 }
@@ -4557,13 +4582,11 @@ fn render_image_report(
             ));
         }
     }
-    let unprocessed = if skipped.is_empty() {
-        String::new()
-    } else {
-        format!(", {} unprocessed", skipped.len())
-    };
+    // The count is always emitted: the command reference pins this line, and a
+    // field that appears only sometimes is what breaks a parser.
     out.push_str(&format!(
-        "summary: {uploads} to upload, {keeps} kept, {errors} error(s){unprocessed}\n"
+        "summary: {uploads} to upload, {keeps} kept, {errors} error(s), {} unprocessed\n",
+        skipped.len()
     ));
     (out, errors)
 }
@@ -6319,6 +6342,53 @@ mod tests {
         let (report, errors) = render_image_report("target", &[], &[]);
         assert_eq!(errors, 0);
         assert!(report.contains("(none)"), "{report}");
+        // The count is part of the pinned format even when it is zero.
+        assert!(report.contains("0 error(s), 0 unprocessed"), "{report}");
+    }
+
+    #[test]
+    fn title_suffix_gets_its_own_reason() {
+        let skipped = scan_skipped_images("![a](file:///tmp/x/a.png \"title\")");
+        assert_eq!(skipped.len(), 1);
+        assert!(
+            skipped[0].reason.contains("title suffix"),
+            "{}",
+            skipped[0].reason
+        );
+        // A bare space is still the token problem, not a title.
+        let spaced = scan_skipped_images("![a](file:///tmp/x/a b.png)");
+        assert!(
+            spaced[0].reason.contains("one token"),
+            "{}",
+            spaced[0].reason
+        );
+    }
+
+    #[test]
+    fn raw_spans_follow_the_converter_grammar() {
+        // A span ends at the first `]` followed by `(` — the shape the
+        // converter's regex accepts — so an alt text carrying its own bracket is
+        // not recognised here either, and stays literal text as before.
+        assert!(find_raw_image_spans("![a[b]](x.png)").is_empty());
+        // CJK alt text and a src at the end of the line are byte-safe.
+        let cjk = find_raw_image_spans("![图](./图.png)");
+        assert_eq!(cjk.len(), 1);
+        assert_eq!(cjk[0].alt, "图");
+        assert_eq!(cjk[0].inner, "./图.png");
+        let line = "text ![a](x y.png)";
+        let at_end = find_raw_image_spans(line);
+        assert_eq!(at_end.len(), 1);
+        assert_eq!(&line[at_end[0].start..at_end[0].end], "![a](x y.png)");
+        // Two spans on one line stay separate, and the second keeps its own range.
+        let two_line = "![a](1.png)![b](2.png)";
+        let two = find_raw_image_spans(two_line);
+        assert_eq!(two.len(), 2);
+        assert_eq!(&two_line[two[1].start..two[1].end], "![b](2.png)");
+        // A src containing `(` is truncated at the first `)`: that reads as a
+        // missing file (loud), not as a silent skip.
+        let paren = find_raw_image_spans("![a](x(y).png)");
+        assert_eq!(paren.len(), 1);
+        assert_eq!(paren[0].inner, "x(y");
     }
 
     #[test]
@@ -6439,7 +6509,7 @@ mod tests {
         assert_eq!(skipped[0].line, 1);
         assert!(skipped[0].raw.starts_with("![a]"), "{}", skipped[0].raw);
         assert!(
-            skipped[1].reason.contains("one token"),
+            skipped[1].reason.contains("title suffix"),
             "{}",
             skipped[1].reason
         );
