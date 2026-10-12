@@ -759,6 +759,16 @@ with the asset id; a remote URL or an existing asset id is kept as-is. Images in
 fenced code blocks are left alone. A missing file, an unreadable file, or a MIME
 outside `image/jpeg|png|webp|gif` fails the command (SVG is rejected by the server).
 
+A `src` is one token with no spaces — the shape the Markdown converter turns into
+`<img>` — so a local path that contains spaces has to be wrapped in angle
+brackets, `![alt](<./a b.png>)`, and `%XX` escapes are decoded
+(`file:///tmp/a%20b.png` finds `a b.png`). Anything else that looks like an image
+but cannot be handled — a space without brackets, a `"title"` suffix, an empty
+`src`, or an angle-wrapped non-local `src` — is not an error: the reference stays
+literal Markdown on the page and `pbot` says so on stderr. `--dry-run` lists
+those under `unprocessed` and counts them in its summary, so a report cannot read
+as clean while the page is about to keep raw `![…](…)` text.
+
 **Examples**
 
 ```

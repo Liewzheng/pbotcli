@@ -4184,7 +4184,47 @@ fn classify_image_src(src: &str) -> ImageSource {
     } else if planebotcli_resolve::is_uuid(src) {
         ImageSource::AssetId
     } else {
-        ImageSource::Local(src.strip_prefix("file://").unwrap_or(src).to_string())
+        let path = src.strip_prefix("file://").unwrap_or(src);
+        ImageSource::Local(percent_decode(path))
+    }
+}
+
+/// Percent-decode `%XX` escapes the way a browser resolves an `img src`, so
+/// `file:///tmp/a%20b.png` finds the file on disk. A `%` that is not a valid
+/// escape is kept verbatim, so a path that literally contains one still works.
+fn percent_decode(src: &str) -> String {
+    let bytes = src.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if let Some(decoded) = decode_escape(bytes, i) {
+            out.push(decoded);
+            i += 3;
+            continue;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Decode the `%XX` escape starting at `start`, or `None` when the bytes there
+/// are not a valid one.
+fn decode_escape(bytes: &[u8], start: usize) -> Option<u8> {
+    if bytes[start] != b'%' || start + 2 >= bytes.len() {
+        return None;
+    }
+    let hi = hex_digit(bytes[start + 1])?;
+    let lo = hex_digit(bytes[start + 2])?;
+    Some(hi * 16 + lo)
+}
+
+fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
     }
 }
 
@@ -4250,9 +4290,17 @@ struct ImageSpan {
     src: String,
 }
 
-/// All `![alt](src)` occurrences on one line (a `src` with whitespace is not
-/// matched, mirroring the converter's grammar).
-fn find_image_spans(line: &str) -> Vec<ImageSpan> {
+/// One `![alt](inner)` occurrence on a line, before the src grammar is applied:
+/// the byte range of the whole construct plus its parts.
+struct RawImageSpan {
+    start: usize,
+    end: usize,
+    alt: String,
+    inner: String,
+}
+
+/// All `![alt](inner)` occurrences on one line, whatever `inner` holds.
+fn find_raw_image_spans(line: &str) -> Vec<RawImageSpan> {
     let mut spans = Vec::new();
     let mut cursor = 0;
     while let Some(bang) = line[cursor..].find("![") {
@@ -4270,19 +4318,107 @@ fn find_image_spans(line: &str) -> Vec<ImageSpan> {
         let Some(close_src) = paren.find(')') else {
             break;
         };
-        let src = paren[..close_src].to_string();
         let end = start + 2 + close_alt + 1 + 1 + close_src + 1;
-        if !src.is_empty() && !src.chars().any(char::is_whitespace) {
-            spans.push(ImageSpan {
-                start,
-                end,
-                alt: after[..close_alt].to_string(),
-                src,
-            });
-        }
+        spans.push(RawImageSpan {
+            start,
+            end,
+            alt: after[..close_alt].to_string(),
+            inner: paren[..close_src].to_string(),
+        });
         cursor = end;
     }
     spans
+}
+
+/// Split an `<…>`-wrapped src into its value and whether brackets were present.
+///
+/// `<` and `>` are one byte each, so the slicing is on character boundaries.
+fn split_angle(inner: &str) -> (&str, bool) {
+    if inner.len() > 2 && inner.starts_with('<') && inner.ends_with('>') {
+        (&inner[1..inner.len() - 1], true)
+    } else {
+        (inner, false)
+    }
+}
+
+/// Why a `![alt](inner)` reference cannot be handled, or `None` when it can.
+///
+/// The accepted grammar is deliberately narrow. A src is one whitespace-free
+/// token — the same shape `planebotcli_html::md_to_html` converts — with one
+/// extension: a local path may be wrapped in `<…>` so it can carry spaces.
+/// Only a local file is rewritten to an asset uuid after upload, so a remote
+/// URL or an asset id has to stay a single token; accepting more would leave
+/// the page with a src the web side cannot resolve.
+fn image_reject_reason(inner: &str) -> Option<&'static str> {
+    let (src, wrapped) = split_angle(inner);
+    if src.is_empty() {
+        return Some("the src is empty");
+    }
+    if wrapped {
+        return match classify_image_src(src) {
+            ImageSource::Local(_) => None,
+            _ => Some("angle brackets are only accepted around a local file path"),
+        };
+    }
+    if src.chars().any(char::is_whitespace) {
+        return Some(
+            "the src must be one token — wrap a local path in <…> or percent-encode its spaces",
+        );
+    }
+    None
+}
+
+/// All `![alt](src)` occurrences on one line that the grammar accepts.
+fn find_image_spans(line: &str) -> Vec<ImageSpan> {
+    find_raw_image_spans(line)
+        .into_iter()
+        .filter(|span| image_reject_reason(&span.inner).is_none())
+        .map(|span| ImageSpan {
+            src: split_angle(&span.inner).0.to_string(),
+            start: span.start,
+            end: span.end,
+            alt: span.alt,
+        })
+        .collect()
+}
+
+/// One image reference the grammar rejects: what it left on the page, why, and
+/// where. Callers warn about these so a skipped image is never silent.
+struct SkippedImage {
+    line: usize,
+    raw: String,
+    reason: &'static str,
+}
+
+/// Collect every image reference `scan_md_images` will not handle. Fenced code
+/// goes through the same view, so an example in a fence is never reported.
+fn scan_skipped_images(md: &str) -> Vec<SkippedImage> {
+    let mut skipped = Vec::new();
+    map_content_lines(md, |line, line_no| {
+        for span in find_raw_image_spans(line) {
+            if let Some(reason) = image_reject_reason(&span.inner) {
+                skipped.push(SkippedImage {
+                    line: line_no,
+                    raw: line[span.start..span.end].to_string(),
+                    reason,
+                });
+            }
+        }
+        line.to_string()
+    });
+    skipped
+}
+
+/// Warn about rejected references. Without this a skipped image is invisible:
+/// the page keeps the literal markdown and the command still exits 0, which
+/// reads as a successful embed.
+fn warn_skipped_images(skipped: &[SkippedImage]) {
+    for image in skipped {
+        eprintln!(
+            "warning: line {}: {} was not uploaded — {}; it will stay literal markdown on the page",
+            image.line, image.raw, image.reason
+        );
+    }
 }
 
 /// All `![alt](src)` occurrences on one line, with the line number attached.
@@ -4362,7 +4498,16 @@ fn describe_image(index: usize, image: &MdImage) -> (String, ImagePlan) {
 
 /// Render the `--dry-run` report and count errors (a non-zero count means the
 /// caller must exit non-zero without writing anything).
-fn render_image_report(target: &str, images: &[MdImage]) -> (String, usize) {
+///
+/// `skipped` holds the references the grammar rejects. They are not errors —
+/// the run proceeds and leaves them as literal markdown — but they are listed
+/// and counted, so a report cannot read as "nothing to worry about" while the
+/// page is about to keep raw `![…](…)` text.
+fn render_image_report(
+    target: &str,
+    images: &[MdImage],
+    skipped: &[SkippedImage],
+) -> (String, usize) {
     let mut out = String::from("dry run: no writes will be performed\n");
     out.push_str(&format!("target: {target}\n"));
     out.push_str("images:\n");
@@ -4383,8 +4528,25 @@ fn render_image_report(target: &str, images: &[MdImage]) -> (String, usize) {
         out.push_str(&line);
         out.push('\n');
     }
+    if !skipped.is_empty() {
+        out.push_str("unprocessed (left as literal markdown on the page):\n");
+        for (i, image) in skipped.iter().enumerate() {
+            out.push_str(&format!(
+                "  {}. line {}: {} -> {}\n",
+                i + 1,
+                image.line,
+                image.raw,
+                image.reason
+            ));
+        }
+    }
+    let unprocessed = if skipped.is_empty() {
+        String::new()
+    } else {
+        format!(", {} unprocessed", skipped.len())
+    };
     out.push_str(&format!(
-        "summary: {uploads} to upload, {keeps} kept, {errors} error(s)\n"
+        "summary: {uploads} to upload, {keeps} kept, {errors} error(s){unprocessed}\n"
     ));
     (out, errors)
 }
@@ -4599,9 +4761,15 @@ async fn cmd_doc_create(
         // markdown image preflight; only the markdown path can carry
         // local-image references that need uploading.
         let images = content.map(scan_md_images).unwrap_or_default();
-        let (report, errors) = render_image_report(&target, &images);
+        let skipped = content.map(scan_skipped_images).unwrap_or_default();
+        let (report, errors) = render_image_report(&target, &images, &skipped);
         eprint!("{report}");
         return dry_run_result(errors);
+    }
+    // A reference the grammar rejects stays literal markdown on the page. Say
+    // so before anything is written: a silent skip reads as a successful embed.
+    if let Some(md) = content {
+        warn_skipped_images(&scan_skipped_images(md));
     }
     // A markdown body with local images needs the page id before uploading, so
     // the page is created first and patched once the assets exist (the same
@@ -4686,9 +4854,15 @@ async fn cmd_doc_update(
         // --content-raw and --content-html skip the markdown image preflight;
         // only the markdown path can carry local-image references.
         let images = content.map(scan_md_images).unwrap_or_default();
-        let (report, errors) = render_image_report(&target, &images);
+        let skipped = content.map(scan_skipped_images).unwrap_or_default();
+        let (report, errors) = render_image_report(&target, &images, &skipped);
         eprint!("{report}");
         return dry_run_result(errors);
+    }
+    // A reference the grammar rejects stays literal markdown on the page. Say
+    // so before the update is sent: a silent skip reads as a successful embed.
+    if let Some(md) = content {
+        warn_skipped_images(&scan_skipped_images(md));
     }
     let mut write = PageWrite::default();
     // Title uses truthiness like the Python `if title:`, so `--title ""` is
@@ -6117,7 +6291,7 @@ mod tests {
     #[test]
     fn dry_run_report_counts_errors_and_keeps() {
         let md = "![r](https://x.io/a.png) ![u](11111111-2222-3333-4444-555555555555) ![m](./definitely-missing.png)";
-        let (report, errors) = render_image_report("target", &scan_md_images(md));
+        let (report, errors) = render_image_report("target", &scan_md_images(md), &[]);
         assert_eq!(errors, 1);
         assert!(report.contains("2 kept"), "{report}");
         assert!(report.contains("file not found"), "{report}");
@@ -6125,9 +6299,24 @@ mod tests {
 
     #[test]
     fn dry_run_report_without_images_is_clean() {
-        let (report, errors) = render_image_report("target", &[]);
+        let (report, errors) = render_image_report("target", &[], &[]);
         assert_eq!(errors, 0);
         assert!(report.contains("(none)"), "{report}");
+    }
+
+    #[test]
+    fn dry_run_report_lists_unprocessed_without_failing() {
+        // A rejected reference is a warning, not an error: the run exits 0 but
+        // the report has to say the page keeps literal markdown.
+        let md = "![a](file:///tmp/x/a b.png)";
+        let (report, errors) =
+            render_image_report("t", &scan_md_images(md), &scan_skipped_images(md));
+        assert_eq!(errors, 0);
+        assert!(
+            report.contains("unprocessed (left as literal markdown"),
+            "{report}"
+        );
+        assert!(report.contains("0 error(s), 1 unprocessed"), "{report}");
     }
 
     #[test]
@@ -6137,7 +6326,7 @@ mod tests {
         let svg = dir.join("a.svg");
         std::fs::write(&svg, "<svg/>").unwrap();
         let md = format!("![s]({})", svg.display());
-        let (report, errors) = render_image_report("t", &scan_md_images(&md));
+        let (report, errors) = render_image_report("t", &scan_md_images(&md), &[]);
         std::fs::remove_dir_all(&dir).unwrap();
         assert_eq!(errors, 1);
         assert!(
@@ -6153,7 +6342,7 @@ mod tests {
         let png = dir.join("a.png");
         std::fs::write(&png, "x").unwrap();
         let md = format!("![]({})", png.display());
-        let (report, errors) = render_image_report("t", &scan_md_images(&md));
+        let (report, errors) = render_image_report("t", &scan_md_images(&md), &[]);
         std::fs::remove_dir_all(&dir).unwrap();
         assert_eq!(errors, 0);
         assert!(report.contains("1 to upload"), "{report}");
@@ -6165,5 +6354,70 @@ mod tests {
         assert!(dry_run_result(0).is_ok());
         let err = dry_run_result(2).unwrap_err();
         assert_eq!(err.exit_code(), 5);
+    }
+
+    #[test]
+    fn percent_decode_resolves_escapes_and_keeps_literals() {
+        assert_eq!(percent_decode("/tmp/a%20b.png"), "/tmp/a b.png");
+        assert_eq!(percent_decode("/tmp/a%2Fb.png"), "/tmp/a/b.png");
+        assert_eq!(percent_decode("/tmp/100%25.png"), "/tmp/100%.png");
+        // Not a valid escape: keep the bytes exactly as written.
+        assert_eq!(percent_decode("/tmp/a%zz.png"), "/tmp/a%zz.png");
+        assert_eq!(percent_decode("/tmp/a%2.png"), "/tmp/a%2.png");
+        assert_eq!(percent_decode("/tmp/图%20片.png"), "/tmp/图 片.png");
+    }
+
+    #[test]
+    fn classify_image_src_decodes_percent_escapes() {
+        assert_eq!(
+            classify_image_src("file:///tmp/a%20b.png"),
+            ImageSource::Local("/tmp/a b.png".to_string())
+        );
+    }
+
+    #[test]
+    fn scan_md_images_accepts_angle_wrapped_local_path() {
+        // The `<…>` form is the markdown way to carry spaces; the brackets are
+        // dropped so the path can be read, and the rewriter replaces the whole
+        // construct anyway.
+        let md = "![a](<file:///tmp/x/a b.png>)";
+        let images = scan_md_images(md);
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].src, "file:///tmp/x/a b.png");
+        assert!(scan_skipped_images(md).is_empty());
+    }
+
+    #[test]
+    fn scan_skipped_images_flags_what_the_grammar_rejects() {
+        let md = "![a](file:///tmp/x/a b.png) ![b](file:///tmp/x/a.png \"t\") ![c]()";
+        let skipped = scan_skipped_images(md);
+        assert_eq!(skipped.len(), 3);
+        assert_eq!(skipped[0].line, 1);
+        assert!(skipped[0].raw.starts_with("![a]"), "{}", skipped[0].raw);
+        assert!(
+            skipped[1].reason.contains("one token"),
+            "{}",
+            skipped[1].reason
+        );
+        assert!(skipped[2].reason.contains("empty"), "{}", skipped[2].reason);
+    }
+
+    #[test]
+    fn scan_skipped_images_rejects_angle_wrapped_remote_url() {
+        // Only a local path is rewritten after upload; an angle-wrapped remote
+        // URL would keep its brackets in the page's src.
+        let skipped = scan_skipped_images("![a](<https://x.io/a b.png>)");
+        assert_eq!(skipped.len(), 1);
+        assert!(
+            skipped[0].reason.contains("local file"),
+            "{}",
+            skipped[0].reason
+        );
+    }
+
+    #[test]
+    fn scan_skipped_images_ignores_well_formed_and_fenced() {
+        let md = "![ok](https://x.io/a.png)\n```\n![f](a b.png)\n```";
+        assert!(scan_skipped_images(md).is_empty());
     }
 }
