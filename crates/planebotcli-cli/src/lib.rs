@@ -1683,7 +1683,7 @@ async fn cmd_whoami(client: &PlaneClient, json: bool) -> Result<(), PlaneError> 
         // A service principal carries `type` and no person fields; naming the
         // kind keeps the identity readable instead of looking like a credential
         // that failed to load.
-        if let Some(kind) = me.kind.as_deref().filter(|k| !k.is_empty()) {
+        if let Some(kind) = me.kind.as_deref() {
             rows.push(vec!["type".to_string(), kind.to_string()]);
         }
         if me.has_person_fields() {

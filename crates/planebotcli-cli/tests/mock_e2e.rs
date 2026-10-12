@@ -484,6 +484,10 @@ fn whoami_json_keeps_the_service_principal_identity() {
     let parsed: serde_json::Value = serde_json::from_str(&stdout_of(&out)).expect("valid JSON");
     assert_eq!(parsed["name"], "kimicode-bot");
     assert_eq!(parsed["type"], "service_principal");
+    // The existing person keys stay in the object, unchanged and unset.
+    for key in ["display_name", "first_name", "last_name", "email"] {
+        assert!(parsed[key].is_null(), "{key} = {}", parsed[key]);
+    }
 }
 
 #[test]
@@ -495,8 +499,10 @@ fn whoami_table_names_the_service_identity() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("kimicode-bot"), "{err}");
     assert!(err.contains("service_principal"), "{err}");
-    // No person fields came back, so none are invented.
-    assert!(!err.contains("display_name"), "{err}");
+    // No person fields came back, so no person rows are invented.
+    for field in ["display_name", "first_name", "last_name", "email"] {
+        assert!(!err.contains(field), "{field} rendered in {err}");
+    }
 }
 
 #[test]

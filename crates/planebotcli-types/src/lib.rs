@@ -15,10 +15,16 @@ use serde_json::Value;
 /// A service-principal credential has no person fields: the server answers with
 /// `name` and `type: "service_principal"` instead. Both are kept, otherwise the
 /// identity is dropped and `whoami` renders a block of blanks.
+///
+/// An empty string counts as absent throughout: the server sends `null` (or
+/// omits the field entirely) for what it has not populated.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
     pub id: String,
     pub name: Option<String>,
+    /// The server's `type`, renamed because `type` is a Rust keyword. It is
+    /// serialized and displayed as `type`, so `--json` consumers and the table
+    /// see the API's own name.
     #[serde(rename = "type")]
     pub kind: Option<String>,
     pub display_name: Option<String>,
@@ -28,20 +34,38 @@ pub struct User {
 }
 
 impl User {
-    /// The name to show for this identity: a service principal's `name` first,
-    /// then `display_name`, then `first_name last_name`.
+    /// The name to show for this identity.
+    ///
+    /// A service principal has no person fields at all and is named by `name`;
+    /// a person is named by `display_name`, then `first_name last_name`. A
+    /// payload that only carries `name` (an unlabelled bot) still gets a label
+    /// from the fallback.
     pub fn display_label(&self) -> String {
-        for candidate in [self.name.as_deref(), self.display_name.as_deref()] {
-            if let Some(name) = candidate.filter(|s| !s.is_empty()) {
-                return name.to_string();
-            }
+        let name = self.name.as_deref().filter(|s| !s.is_empty());
+        // `Option<&str>` is Copy, so the filtered view does not consume `name`,
+        // which the final fallback below still needs.
+        if let Some(sp_name) = name.filter(|_| self.is_service_principal()) {
+            return sp_name.to_string();
         }
-        [self.first_name.as_deref(), self.last_name.as_deref()]
+        if let Some(label) = self.display_name.as_deref().filter(|s| !s.is_empty()) {
+            return label.to_string();
+        }
+        let joined = [self.first_name.as_deref(), self.last_name.as_deref()]
             .into_iter()
             .flatten()
             .filter(|s| !s.is_empty())
             .collect::<Vec<_>>()
-            .join(" ")
+            .join(" ");
+        if joined.is_empty() {
+            name.unwrap_or_default().to_string()
+        } else {
+            joined
+        }
+    }
+
+    /// True when the credential is a service principal rather than a person.
+    pub fn is_service_principal(&self) -> bool {
+        self.kind.as_deref() == Some("service_principal")
     }
 
     /// True when the server sent at least one person field.
@@ -513,5 +537,37 @@ mod tests {
         assert_eq!(me.display_label(), "Jicai Liu");
         let nameless = user(r#"{"id":"u3","first_name":"","last_name":""}"#);
         assert_eq!(nameless.display_label(), "");
+    }
+
+    #[test]
+    fn display_label_ignores_name_for_a_person() {
+        // A person whose payload also carries `name` is still labelled by
+        // `display_name`: only a service principal is named by `name`.
+        let me = user(
+            r#"{"id":"u7","name":"jicai-bot","display_name":"Jicai Liu","first_name":"Jicai","last_name":"Liu","email":"j@x"}"#,
+        );
+        assert_eq!(me.display_label(), "Jicai Liu");
+        let sp = user(
+            r#"{"id":"sp2","name":"bot","type":"service_principal","display_name":"ignored"}"#,
+        );
+        assert!(sp.is_service_principal());
+        assert_eq!(sp.display_label(), "bot");
+    }
+
+    #[test]
+    fn display_label_handles_a_one_sided_or_untyped_name() {
+        assert_eq!(
+            user(r#"{"id":"u4","first_name":"Jicai"}"#).display_label(),
+            "Jicai"
+        );
+        assert_eq!(
+            user(r#"{"id":"u5","last_name":"Liu"}"#).display_label(),
+            "Liu"
+        );
+        // Only `name` and no `type`: the fallback still labels the identity.
+        assert_eq!(
+            user(r#"{"id":"u6","name":"lonely-bot"}"#).display_label(),
+            "lonely-bot"
+        );
     }
 }

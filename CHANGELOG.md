@@ -23,9 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `pbot whoami` renders a service-principal credential instead of a block of
   blanks. `User` kept only the person fields, so an SP — which the server
   describes with `name` and `type: "service_principal"` — came back as an id
-  plus four empty rows. The table now shows the resolved `name` and, when the
-  server sends one, the `type`; the `--json` object gains those two keys and no
-  existing key changes.
+  plus four empty rows. The table now shows the resolved `name` and the `type`
+  when the server sends one, and omits the `display_name` / `first_name` /
+  `last_name` / `email` rows when all four are empty; `--json` gains `name` and
+  `type` and changes no existing key. Scripts that parse the table should read
+  `--json` instead, which is the stable interface.
 - Windows `.msi` installer restored. The v1.4.x release intentionally
   dropped `msi` because cargo-dist 0.32's plan step could not detect
   `[package.metadata.wix]` GUIDs in planebotcli-cli's Cargo.toml. Instead
