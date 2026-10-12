@@ -4191,9 +4191,10 @@ fn classify_image_src(src: &str) -> ImageSource {
 
 /// Percent-decode `%XX` escapes the way a browser resolves an `img src`, so
 /// `file:///tmp/a%20b.png` finds the file on disk. An escape that is not valid
-/// hex — or whose byte would leave the path invalid UTF-8 — is kept verbatim,
-/// so a literal `%` still works and no path is silently rewritten into a
-/// different one.
+/// hex is kept verbatim, so a literal `%` still works; if any escape decodes to
+/// a byte that would leave the path invalid UTF-8, the whole path is left as
+/// written rather than substituted with U+FFFD, which would silently point the
+/// lookup at a different path.
 fn percent_decode(src: &str) -> String {
     let bytes = src.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -6362,6 +6363,28 @@ mod tests {
             "{}",
             spaced[0].reason
         );
+    }
+
+    #[test]
+    fn report_and_warning_agree_on_what_is_unprocessed() {
+        // The dry-run report and the stderr warning read the same scan, so a
+        // reference listed in one must appear in the other.
+        let md = "![a](a b.png) ![b](<ok.png>) ![c](x.png \"t\")";
+        let (report, _) = render_image_report("t", &scan_md_images(md), &scan_skipped_images(md));
+        let skipped = scan_skipped_images(md);
+        assert_eq!(skipped.len(), 2);
+        for image in &skipped {
+            assert!(
+                report.contains(&image.raw),
+                "{} missing from {report}",
+                image.raw
+            );
+            assert!(
+                report.contains(image.reason),
+                "{} missing from {report}",
+                image.reason
+            );
+        }
     }
 
     #[test]
