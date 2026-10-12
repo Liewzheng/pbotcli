@@ -465,7 +465,10 @@ fn relations_rm_reports_the_missing_endpoint() {
 fn doc_show_without_project_hints_at_minus_p_on_workspace_404() {
     let mut server = Server::new();
     let workspace_page_get = server
-        .mock("GET", "/api/v1/workspaces/ws/pages/7880a16b-2067-47e1-8bba-c75246545b6d/")
+        .mock(
+            "GET",
+            "/api/v1/workspaces/ws/pages/7880a16b-2067-47e1-8bba-c75246545b6d/",
+        )
         .with_status(404)
         .with_header("content-type", "application/json")
         .with_body(r#"{"detail":"Not found"}"#)

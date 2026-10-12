@@ -727,7 +727,7 @@ pbot doc list -p <project> [--json]
 pbot doc show <doc> [-p <project>] [--json]
 ```
 
-`-p <project>` 实际上必填：v1 API 只提供项目级页面路由，省略 `-p` 会命中一个服务端并不存在的工作区级路由。此时命令会用原 404 文案加一条提示告诉下一步该传 `-p`，例如 `Error: Resource not found (HTTP 404).` 之后接 `Hint: This server has no workspace-level pages route; pass -p <project> to look up a project page.`（退出码 3）。带 `-p` 时查找、成功输出和退出码与之前一致。
+`-p <project>` 实际上必填：v1 API 只提供项目级页面路由，省略 `-p` 会命中一个服务端并不存在的工作区级路由。此时命令会用原 404 文案加一条提示告诉下一步该传 `-p`，例如 `Error: Resource not found (HTTP 404).` 之后接 ``Hint: This server has no workspace-level pages route; pass `-p <project>` to look up a project page.``（退出码 3）。带 `-p` 时查找、成功输出和退出码与之前一致。
 
 ### pbot doc create
 
