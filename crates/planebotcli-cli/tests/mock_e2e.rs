@@ -896,6 +896,62 @@ fn comment_create_body_from_stdin_matches_inline_body() {
 }
 
 #[test]
+fn comment_create_empty_body_stdin_hints_name_the_file_flag() {
+    // An empty stdin reports the **file** flag (`--body-file` for the
+    // `--body` route, `--body-md-file` for the `--body-md` route) — the
+    // inline flags take body text, so suggesting them as a file path would
+    // be misleading. Run both routes and the matching file route to pin the
+    // mapping and the unchanged file wording.
+    let file = write_temp_body("");
+
+    for (route_flag, file_flag) in [
+        ("--body", "--body-file"),
+        ("--body-md", "--body-md-file"),
+        ("--body-file", "--body-file"),
+        ("--body-md-file", "--body-md-file"),
+    ] {
+        let mut server = Server::new();
+        mock_comment_reads(&mut server, ITEMS);
+        let post = server
+            .mock("POST", mockito::Matcher::Any)
+            .with_status(201)
+            .expect(0)
+            .create();
+
+        let mut args: Vec<&str> = vec!["comment", "create", "DEMO-1", "-p", "Demo", route_flag];
+        let stdin_or_path;
+        let mut stdin_data: Option<Vec<u8>> = None;
+        if route_flag == "--body" || route_flag == "--body-md" {
+            stdin_or_path = "-".to_string();
+            stdin_data = Some(Vec::new());
+        } else {
+            stdin_or_path = file.to_string_lossy().into_owned();
+        }
+        args.push(&stdin_or_path);
+        args.push("--json");
+        args.push("--no-cache");
+
+        let out = if let Some(data) = stdin_data {
+            run_with_stdin(&args, &server.url(), &data)
+        } else {
+            run(&args, &server.url())
+        };
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(
+            out.status.code(),
+            Some(5),
+            "route {route_flag}: expected exit 5, got {:?}; stderr: {stderr}",
+            out.status.code()
+        );
+        assert!(
+            stderr.contains(file_flag),
+            "route {route_flag}: hint should name {file_flag}; stderr: {stderr}"
+        );
+        post.assert();
+    }
+}
+
+#[test]
 fn comment_create_dot_slash_dash_is_a_literal_file_not_stdin() {
     let mut server = Server::new();
     mock_comment_reads(&mut server, ITEMS);

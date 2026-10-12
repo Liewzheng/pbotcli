@@ -2891,6 +2891,21 @@ async fn locate_issue(
     }
 }
 
+/// Map the body flag the user passed to its file counterpart for hints.
+///
+/// The inline `--body` / `--body-md` flags take the body text directly
+/// (not a path), so when the stdin branch of [`read_body_source`] advises
+/// the user to "pass ... for a file", it has to suggest `--body-file` /
+/// `--body-md-file` — not the inline flag itself. The file flags and any
+/// other name pass through unchanged.
+fn file_flag(flag: &str) -> &str {
+    match flag {
+        "--body" => "--body-file",
+        "--body-md" => "--body-md-file",
+        other => other,
+    }
+}
+
 /// Read the comment body from a path / std-in token.
 ///
 /// `path_or_dash == "-"` reads stdin to EOF (a `--body -` / `--body-md -`
@@ -2899,12 +2914,15 @@ async fn locate_issue(
 /// names the surface that produced the path, so the validation hint can
 /// point the user back to the right flag.
 fn read_body_source(path_or_dash: &str, flag: &str) -> Result<String, PlaneError> {
+    let file_hint_flag = file_flag(flag);
     let (body, from_stdin) = if path_or_dash == "-" {
         let mut buf = String::new();
         std::io::stdin().read_to_string(&mut buf).map_err(|err| {
             PlaneError::validation_with_hint(
                 format!("failed to read stdin for {flag}: {err}"),
-                format!("Pipe the body into the command (e.g. `cat file | pbot comment ... {flag} -`), or pass {flag} <PATH>."),
+                format!(
+                    "Pipe the body into the command (e.g. `cat file | pbot comment ... {flag} -`), or pass {file_hint_flag} <PATH>."
+                ),
             )
         })?;
         (buf, true)
@@ -2924,7 +2942,7 @@ fn read_body_source(path_or_dash: &str, flag: &str) -> Result<String, PlaneError
             return Err(PlaneError::validation_with_hint(
                 format!("{flag} read an empty body from stdin."),
                 format!(
-                    "Pipe a non-empty body into the command (e.g. `cat file | pbot comment ... {flag} -`), or pass {flag} <PATH> for a file."
+                    "Pipe a non-empty body into the command (e.g. `cat file | pbot comment ... {flag} -`), or pass {file_hint_flag} <PATH> for a file."
                 ),
             ));
         }
