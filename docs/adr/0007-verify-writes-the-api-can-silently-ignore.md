@@ -1,7 +1,7 @@
 ---
 status: accepted
 date: 2026-08-18
-decision-makers: planebotcli maintainers
+decision-makers: pbotcli maintainers
 ---
 
 # ADR-0007: Verify writes the API can silently ignore

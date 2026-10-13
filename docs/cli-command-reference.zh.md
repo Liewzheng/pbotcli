@@ -6,7 +6,7 @@
 
 `pbot` —— [Plane.so](https://plane.so)（SaaS 或自托管）的命令行客户端：工作项（work item）、项目、周期、模块、标签、状态、文档、收件箱与评论。
 
-`pbot` 是 `planebotcli` 的别名，两者是同一个二进制。
+`pbot` 是 `pbotcli` 的别名，两者是同一个二进制。
 
 ## 用法
 

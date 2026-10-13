@@ -1,7 +1,7 @@
 ---
 status: accepted
 date: 2026-07-03
-decision-makers: planebotcli maintainers
+decision-makers: pbotcli maintainers
 ---
 
 # ADR-0005: Dual output contract (table → stderr, JSON → stdout)
