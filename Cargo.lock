@@ -786,6 +786,96 @@ dependencies = [
 ]
 
 [[package]]
+name = "pbotcli-cache"
+version = "1.5.0"
+dependencies = [
+ "dirs",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "pbotcli-cli"
+version = "1.5.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "mockito",
+ "pbotcli-cache",
+ "pbotcli-client",
+ "pbotcli-core",
+ "pbotcli-format",
+ "pbotcli-html",
+ "pbotcli-resolve",
+ "pbotcli-types",
+ "regex",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "pbotcli-client"
+version = "1.5.0"
+dependencies = [
+ "anyhow",
+ "mockito",
+ "pbotcli-cache",
+ "pbotcli-core",
+ "pbotcli-types",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "pbotcli-core"
+version = "1.5.0"
+dependencies = [
+ "anyhow",
+ "dirs",
+ "thiserror",
+ "toml",
+]
+
+[[package]]
+name = "pbotcli-format"
+version = "1.5.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tabled",
+]
+
+[[package]]
+name = "pbotcli-html"
+version = "1.5.0"
+dependencies = [
+ "html-escape",
+ "regex",
+]
+
+[[package]]
+name = "pbotcli-resolve"
+version = "1.5.0"
+dependencies = [
+ "pbotcli-client",
+ "pbotcli-core",
+ "pbotcli-types",
+ "rapidfuzz",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "pbotcli-types"
+version = "1.5.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -796,96 +886,6 @@ name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
-
-[[package]]
-name = "planebotcli-cache"
-version = "1.5.0"
-dependencies = [
- "dirs",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "planebotcli-cli"
-version = "1.5.0"
-dependencies = [
- "anyhow",
- "clap",
- "mockito",
- "planebotcli-cache",
- "planebotcli-client",
- "planebotcli-core",
- "planebotcli-format",
- "planebotcli-html",
- "planebotcli-resolve",
- "planebotcli-types",
- "regex",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "planebotcli-client"
-version = "1.5.0"
-dependencies = [
- "anyhow",
- "mockito",
- "planebotcli-cache",
- "planebotcli-core",
- "planebotcli-types",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "planebotcli-core"
-version = "1.5.0"
-dependencies = [
- "anyhow",
- "dirs",
- "thiserror",
- "toml",
-]
-
-[[package]]
-name = "planebotcli-format"
-version = "1.5.0"
-dependencies = [
- "serde",
- "serde_json",
- "tabled",
-]
-
-[[package]]
-name = "planebotcli-html"
-version = "1.5.0"
-dependencies = [
- "html-escape",
- "regex",
-]
-
-[[package]]
-name = "planebotcli-resolve"
-version = "1.5.0"
-dependencies = [
- "planebotcli-client",
- "planebotcli-core",
- "planebotcli-types",
- "rapidfuzz",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "planebotcli-types"
-version = "1.5.0"
-dependencies = [
- "serde",
- "serde_json",
-]
 
 [[package]]
 name = "potential_utf"

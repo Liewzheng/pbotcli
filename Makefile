@@ -6,10 +6,10 @@
 # Setup
 # ──────────────────────────────────────────────
 
-install: ## Install the CLI locally (pbot + planebotcli into ~/.cargo/bin)
+install: ## Install the CLI locally (pbotcli + pbot into ~/.cargo/bin)
 	@echo "install - Install the CLI locally"
 
-	cargo install --path crates/planebotcli-cli --locked
+	cargo install --path crates/pbotcli-cli --locked
 
 build: ## Build the workspace (debug)
 	@echo "build - Build the workspace"

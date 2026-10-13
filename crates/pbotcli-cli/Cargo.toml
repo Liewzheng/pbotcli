@@ -1,0 +1,32 @@
+[package]
+name = "pbotcli-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+autobins = false
+
+[[bin]]
+name = "pbotcli"
+path = "src/main.rs"
+
+[[bin]]
+name = "pbot"
+path = "src/bin/pbot.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+pbotcli-cache = { path = "../pbotcli-cache" }
+regex = { workspace = true }
+pbotcli-client = { path = "../pbotcli-client" }
+pbotcli-core = { path = "../pbotcli-core" }
+pbotcli-format = { path = "../pbotcli-format" }
+pbotcli-html = { path = "../pbotcli-html" }
+pbotcli-resolve = { path = "../pbotcli-resolve" }
+pbotcli-types = { path = "../pbotcli-types" }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+mockito = "1"
