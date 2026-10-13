@@ -765,6 +765,21 @@ mod tests {
     }
 
     #[test]
+    fn md_raw_img_tag_is_escaped() {
+        // The image syntax produces an <img>, a literal tag does not: the
+        // skill's "Images in comments" section documents this, so pin both
+        // halves with a test.
+        assert_eq!(
+            md_to_html("see <img src='x'/> here"),
+            "<p>see &lt;img src=&#x27;x&#x27;/&gt; here</p>"
+        );
+        assert_eq!(
+            md_to_html("see ![shot](11111111-2222-3333-4444-555555555555)"),
+            "<p>see <img src=\"11111111-2222-3333-4444-555555555555\" alt=\"shot\"/></p>"
+        );
+    }
+
+    #[test]
     fn md_headings_all_levels() {
         assert_eq!(md_to_html("# one"), "<h1>one</h1>");
         assert_eq!(md_to_html("###### six"), "<h6>six</h6>");
