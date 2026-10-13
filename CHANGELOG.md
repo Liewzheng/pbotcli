@@ -5,11 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.5.0] - 2026-10-13
+
+### Changed
+- Project renamed to `pbotcli`. The Cargo workspace crates under `crates/`
+  moved from `planebotcli-*` to `pbotcli-*` (cache, cli, client, core, format,
+  html, resolve, types); the CLI binary is now `pbotcli` (the `pbot` alias is
+  unchanged); the GitHub repository is `github.com/Liewzheng/pbotcli` (git
+  remote `pbotcli`); and the cargo-dist user-agent, `homepage`, and
+  `description` metadata now lives on the `pbotcli-cli` package so cargo-dist's
+  Homebrew publish job finds the values it needs.
+- Installer artefacts on the release page were renamed to match the new
+  package name: the shell installers are `pbotcli-cli-installer.sh` /
+  `.ps1`, the drag-and-drop `.dmg` keeps its per-target shape
+  (`pbotcli-<target>.dmg`), the Debian packages are
+  `pbotcli-cli_<version>_<arch>.deb`, and the Windows MSI is
+  `pbotcli-cli-<version>-x86_64.msi` (matches cargo-wix 0.3.9's
+  `target/wix/<package>-<version>-<arch>.msi` output). README's download
+  links were updated to point at the renamed artefacts, and the post-merge
+  `git push <remote> :refs/tags/v1.4.2 v1.4.2` housekeeping instruction now
+  names the `pbotcli` remote.
 
 ### Added
-- `pbot skill show` / `pbot skill path` / `pbot skill version` print the AI skill (`skill/SKILL.md`) that ships with this build — vendored at compile time via `include_str!`, no network round-trip, no side-channel install. `pbot skill show --json` emits a one-line `{ path, version, skill_md }` object so installers / CI can parse it. Pair with the existing version-lint workflow (PR #26) — skill and CLI versions can no longer be out of sync in any direction.
-- `pbot comment create` and `pbot comment update` accept `--body-file <PATH>` and `--body-md-file <PATH>` for bodies that don't fit on the command line (a single argument is hard-capped near 130 KB on Linux by `MAX_ARG_STRLEN`); pass `-` to read the body from stdin. The four body flags are mutually exclusive — passing any two is a parse-time error and never hits the API. The new flags reuse the existing `planebotcli_html::body_to_html` / `md_to_html` path, so `--body-file` is byte-identical to `--body "$(cat PATH)"` (verified in `mock_e2e.rs` against a sample containing backticks, `<`, `&` and Chinese, and against an `![alt](<uuid>)` image for the markdown form).
+- `pbot skill show` / `pbot skill path` / `pbot skill version` print the AI skill (`skill/SKILL.md`) that ships with this build — vendored at compile time via `include_str!`, no network round-trip, no side-channel install. `pbot skill show --json` emits a one-line `{ path, version, skill_md }` object so installers / CI can parse it. Pair with the existing version-lint workflow — skill and CLI versions can no longer be out of sync in any direction.
+- `pbot comment create` and `pbot comment update` accept `--body-file <PATH>` and `--body-md-file <PATH>` for bodies that don't fit on the command line (a single argument is hard-capped near 130 KB on Linux by `MAX_ARG_STRLEN`); pass `-` to read the body from stdin. The four body flags are mutually exclusive — passing any two is a parse-time error and never hits the API. The new flags reuse the existing `pbotcli_html::body_to_html` / `md_to_html` path, so `--body-file` is byte-identical to `--body "$(cat PATH)"` (verified in `mock_e2e.rs` against a sample containing backticks, `<`, `&` and Chinese, and against an `![alt](<uuid>)` image for the markdown form).
 - New `build-linux-deb` job in `release.yml` (runs alongside the existing
   `build-windows-msi` / `build-mac-dmg` jobs) builds Debian packages for both
   `x86_64-unknown-linux-gnu` (`amd64`, on `ubuntu-22.04`) and
@@ -18,7 +37,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   ship `.deb` natively, so we drive nfpm directly — same pattern as the .msi
   and .dmg installer jobs. The `.deb` artifacts land on the GitHub release
   page; README's Linux section gained an
-  `apt install ./planebotcli-cli_<version>_amd64.deb` snippet.
+  `apt install ./pbotcli-cli_<version>_<arch>.deb` snippet.
+- Homebrew (macOS / Linux) install: `brew install Liewzheng/tap/pbotcli`. The
+  formula (`pbotcli.rb`) is published to `github.com/Liewzheng/homebrew-tap`
+  by a new `publish-homebrew-formula` job in `release.yml` driven by
+  cargo-dist 0.32; the formula only reaches the tap once the maintainer tags
+  `v1.5.0` (the first run also needs the `HOMEBREW_TAP_TOKEN` Actions secret
+  in place, otherwise the new publish job fails to authenticate).
 
 ### Fixed
 - `pbot doc show <doc>` without `-p <project>` no longer surfaces a bare
@@ -51,13 +76,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   markdown image syntax `![alt](<uuid>)`, once per image.
 - Windows `.msi` installer restored. The v1.4.x release intentionally
   dropped `msi` because cargo-dist 0.32's plan step could not detect
-  `[package.metadata.wix]` GUIDs in planebotcli-cli's Cargo.toml. Instead
+  `[package.metadata.wix]` GUIDs in pbotcli-cli's Cargo.toml. Instead
   of waiting on a cargo-dist fix, the release workflow now has a dedicated
   `build-windows-msi` job (windows-latest) that installs `cargo-wix`
-  and runs `cargo wix --package planebotcli-cli --output msi` directly.
+  and runs `cargo wix --package pbotcli-cli --nocapture` directly
+  (cargo-wix 0.3.9 writes to `target/wix/`, where the verify step
+  expects the file; `--output msi` was previously tried and removed
+  because it wrote to `msi/` and silently produced no upload).
   The MSI artefact lands on the GitHub release alongside the other
   cargo-dist installers; README's Windows section is restored to link
-  to `planebotcli-x86_64-pc-windows-msvc.msi`.
+  to `pbotcli-cli-<version>-x86_64.msi`.
 - The v1.4.2 release's first `Release` workflow run errored on
   windows-latest with `ParserError: Missing '(' after 'if'` —
   the default shell on `windows-latest` is PowerShell, which doesn't
@@ -67,20 +95,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   parse correctly. **Post-merge housekeeping**: the v1.4.2 tag
   currently sits at the broken commit; once this PR is merged,
   re-tag `v1.4.2` against the new `main` HEAD (`git tag -d v1.4.2
-  && git tag v1.4.2 && git push planebotcli :refs/tags/v1.4.2
+  && git tag v1.4.2 && git push pbotcli :refs/tags/v1.4.2
   v1.4.2`) so the `Release` workflow re-runs against the fixed
   workflow.
 - v1.4.2's `Release` workflow re-run failed at the `cargo wix` step
   with `[2] (Generic): There are no WXS files to create an installer`
   — cargo-wix 0.3.9 reads `wix/main.wxs` from the package root and
-  planebotcli-cli didn't have one. Added a hand-written minimal v3
-  WiX template at `crates/planebotcli-cli/wix/main.wxs`
-  (Product, single Component for `planebotcli.exe`, single Feature,
+  pbotcli-cli didn't have one. Added a hand-written minimal v3
+  WiX template at `crates/pbotcli-cli/wix/main.wxs`
+  (Product, single Component for `pbotcli.exe`, single Feature,
   perMachine InstallScope, hardcoded stable UpgradeCode +
-  path-guid UUIDs) and added a `Build planebotcli-cli
+  path-guid UUIDs) and added a `Build pbotcli-cli
   (x86_64-pc-windows-msvc, release)` step before `cargo wix` so
   the binary lands at the path the template expects
-  (`target/x86_64-pc-windows-msvc/release/planebotcli.exe`).
+  (`target/x86_64-pc-windows-msvc/release/pbotcli.exe`).
 - The `Release` workflow re-ran failed at the `cargo wix` step with
   `CNDL0104: Not a valid source file; ... An XML comment cannot
   contain '--', and '-' cannot be the last character` (line 17 of
@@ -126,7 +154,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   every `Release` run failed with a workflow-file error and published no
   artifacts at all. The job moved into `release.yml`.
 - `build-windows-msi`'s `Swatinem/rust-cache` path was
-  `planebotcli-cli -> target`, naming a directory that doesn't exist at the
+  `pbotcli-cli -> target`, naming a directory that doesn't exist at the
   repo root (the crate lives under `crates/`), so its cache never
   populated. Corrected to `. -> target` — the documented
   `<workspace-root> -> <target-dir>` form for a repo-root workspace, which
@@ -156,7 +184,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `create-dmg` over the per-arch tarballs that `cargo-dist` already ships.
   The `.dmg` includes `planebotcli`, `pbot`, and a short `INSTALL.txt` so
   non-technical users can drag the binaries onto `/usr/local/bin` from Finder.
-- The release workflow now produces a `planebotcli-x86_64-pc-windows-msvc.msi`
+- The release workflow now produces a `planebotcli-cli-<version>-x86_64.msi`
   double-click installer (cargo-dist's native `msi` builder). Windows users
   who prefer the GUI path no longer have to extract a `.zip`.
 - `README.md` documents three install paths per platform (shell one-liner,
