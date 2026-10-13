@@ -1676,22 +1676,34 @@ async fn cmd_whoami(client: &PlaneClient, json: bool) -> Result<(), PlaneError> 
     if json {
         output_json(&me);
     } else {
-        let rows = vec![
+        let mut rows = vec![
             vec!["id".to_string(), me.id.clone()],
-            vec![
+            vec!["name".to_string(), me.display_label()],
+        ];
+        // A service principal carries `type` and no person fields; naming the
+        // kind keeps the identity readable instead of looking like a credential
+        // that failed to load.
+        if let Some(kind) = me.kind.as_deref() {
+            rows.push(vec!["type".to_string(), kind.to_string()]);
+        }
+        if me.has_person_fields() {
+            rows.push(vec![
                 "display_name".to_string(),
                 me.display_name.clone().unwrap_or_default(),
-            ],
-            vec![
+            ]);
+            rows.push(vec![
                 "first_name".to_string(),
                 me.first_name.clone().unwrap_or_default(),
-            ],
-            vec![
+            ]);
+            rows.push(vec![
                 "last_name".to_string(),
                 me.last_name.clone().unwrap_or_default(),
-            ],
-            vec!["email".to_string(), me.email.clone().unwrap_or_default()],
-        ];
+            ]);
+            rows.push(vec![
+                "email".to_string(),
+                me.email.clone().unwrap_or_default(),
+            ]);
+        }
         output_table(&["Field", "Value"], &rows);
     }
     Ok(())

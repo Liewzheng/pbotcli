@@ -460,3 +460,60 @@ fn relations_rm_reports_the_missing_endpoint() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("no relations delete endpoint"), "{err}");
 }
+
+/// A service principal answers with `name` and `type`, and no person fields.
+const ME_SERVICE_PRINCIPAL: &str =
+    r#"{"id":"sp1","name":"kimicode-bot","type":"service_principal"}"#;
+const ME_HUMAN: &str = r#"{"id":"u9","display_name":"Jicai Liu","first_name":"Jicai","last_name":"Liu","email":"j@x"}"#;
+
+fn mock_me(server: &mut Server, body: &str) {
+    server
+        .mock("GET", "/api/v1/users/me/")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(body)
+        .create();
+}
+
+#[test]
+fn whoami_json_keeps_the_service_principal_identity() {
+    let mut server = Server::new();
+    mock_me(&mut server, ME_SERVICE_PRINCIPAL);
+    let out = run(&["whoami", "--json"], &server.url());
+    assert_eq!(out.status.code(), Some(0));
+    let parsed: serde_json::Value = serde_json::from_str(&stdout_of(&out)).expect("valid JSON");
+    assert_eq!(parsed["name"], "kimicode-bot");
+    assert_eq!(parsed["type"], "service_principal");
+    // The existing person keys stay in the object, unchanged and unset.
+    for key in ["display_name", "first_name", "last_name", "email"] {
+        assert!(parsed[key].is_null(), "{key} = {}", parsed[key]);
+    }
+}
+
+#[test]
+fn whoami_table_names_the_service_identity() {
+    let mut server = Server::new();
+    mock_me(&mut server, ME_SERVICE_PRINCIPAL);
+    let out = run(&["whoami"], &server.url());
+    assert_eq!(out.status.code(), Some(0));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("kimicode-bot"), "{err}");
+    assert!(err.contains("service_principal"), "{err}");
+    // No person fields came back, so no person rows are invented.
+    for field in ["display_name", "first_name", "last_name", "email"] {
+        assert!(!err.contains(field), "{field} rendered in {err}");
+    }
+}
+
+#[test]
+fn whoami_table_keeps_the_human_rows() {
+    let mut server = Server::new();
+    mock_me(&mut server, ME_HUMAN);
+    let out = run(&["whoami"], &server.url());
+    assert_eq!(out.status.code(), Some(0));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("Jicai Liu"), "{err}");
+    for field in ["display_name", "first_name", "last_name", "email"] {
+        assert!(err.contains(field), "{field} missing from {err}");
+    }
+}
