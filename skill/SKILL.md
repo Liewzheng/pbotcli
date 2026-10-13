@@ -4,16 +4,16 @@ description: "Manage Plane.so through the pbot / planebotcli CLI — work items,
 allowed-tools: Bash(pbot *, planebotcli *)
 metadata:
   author: planebotcli maintainers
-  version: "1.4.2"
+  version: "1.5.0"
 ---
 
 # pbot — PlanebotCLI
 
-> **Skill version: 1.4.2 — must match `pbot --version`.** A stale skill is
+> **Skill version: 1.5.0 — must match `pbot --version`.** A stale skill is
 > worse than no skill: every command and flag listed below may have been
 > added, renamed or removed since this was written. Before answering any
 > `pbot …` question, verify the version with `pbot --version`. If it differs
-> from `1.4.2`, this document is stale:
+> from `1.5.0`, this document is stale:
 >
 > - End users: run `cargo install planebotcli --locked` (or use the
 >   prebuilt installer from the Releases page) to upgrade, then re-ask.
@@ -188,7 +188,18 @@ pbot doc create --title "Spec" --content "Plain text, `code`, https://links" -p 
 # Comments
 pbot comment ls ABC-123 --json
 pbot comment create ABC-123 --body "Fixed in PR #456" --json
+pbot comment create ABC-123 --body-md "## Notes\n\n- point a\n- point b" --json
+pbot comment create ABC-123 --body-file ./notes.txt --json
+pbot comment create ABC-123 --body-md-file ./notes.md --json
+echo '```text' | pbot comment create ABC-123 --body-md - --json   # pipeline body
 ```
+
+Bodies past ~130 KB cannot ride on argv — the kernel caps a single
+argument well below the 2 MB `ARG_MAX`. Use `--body-file <PATH>` /
+`--body-md-file <PATH>` for that, or pipe via `--body -` /
+`--body-md -`. `./-` is a literal file named `-`, not stdin.
+Exactly one of `--body` / `--body-md` / `--body-file` / `--body-md-file`
+is required; passing two fails at parse time and sends no request.
 
 **Images in comments.** `--body-md` accepts the same Markdown the
 work-item description path does, including `![alt](src)` images.
@@ -254,7 +265,10 @@ PR https://github.com/Liewzheng/planebotcli/pull/N
 **Separate items with a blank line.** The comment body is plain text: a blank line starts a new
 paragraph, a single newline only becomes a br tag. `1) ...\n2) ...` on adjacent lines renders
 joined on the web UI — put an empty line between list items (write the body to a file with real
-blank lines, not a one-liner with `\n` escapes).
+blank lines, not a one-liner with `\n` escapes). Long bodies — past the kernel single-argument
+cap (~130 KB) — must be written to a file and posted via
+`pbot comment create ABC-123 --body-file notes.txt --json` (or `--body-md-file` /
+`--body-md -` for pipelines); `--body` itself cannot carry them.
 
 **No upstream submission.** pbot / planebotcli are an independent distribution: fixes land on
 `main` and are never opened as issues or pull requests against Plane upstream

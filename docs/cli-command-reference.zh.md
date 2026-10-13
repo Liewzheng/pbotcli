@@ -392,23 +392,32 @@ pbot comment list <issue> [-p <project>] [-l <n>] [--json]
 **别名** `new`
 
 ```
-pbot comment create <issue> (-b <text> | --body-md <markdown>) [-p <project>] [--json]
+pbot comment create <issue> (-b <text> | --body-md <markdown> | --body-file <PATH> | --body-md-file <PATH>) [-p <project>] [--json]
 ```
+
+四个正文 flag 必须且只能传一个；同时传两个会在 clap 解析阶段直接拒绝（不发送请求）。
+`--body-file` / `--body-md-file` 接受路径字面量（`./-` 仍是名为 `-` 的文件）；传 `-` 时从
+stdin 读入（例如 `pbot wi show ABC-1 | pbot comment create ABC-2 --body -`）。正文超过内核
+单参数上限（约 130 KB）时请走文件 / stdin 这两条路径。
 
 **选项**
 
 | 选项 | 说明 |
 |---|---|
 | `-b, --body <text>` | 评论正文（纯文本；分段、`code`、裸链接会转成 HTML）。 |
-| `--body-md <markdown>` | 评论正文（原生 markdown）。与 `-b` 互斥。 |
+| `--body-md <markdown>` | 评论正文（原生 markdown）。与其他正文 flag 互斥。 |
+| `--body-file <PATH>` | 从 UTF-8 文件读取纯文本正文（`-` 读 stdin）。等价于 `--body "$(cat PATH)"`。与其他正文 flag 互斥。 |
+| `--body-md-file <PATH>` | 从 UTF-8 文件读取 markdown 正文（`-` 读 stdin）。等价于 `--body-md "$(cat PATH)"`。与其他正文 flag 互斥。 |
 
 ### pbot comment update
 
 更新评论。
 
 ```
-pbot comment update <comment-id> --issue <issue> (-b <text> | --body-md <markdown>) [--json]
+pbot comment update <comment-id> --issue <issue> (-b <text> | --body-md <markdown> | --body-file <PATH> | --body-md-file <PATH>) [--json]
 ```
+
+四个正文 flag 互斥（见 `comment create`）。
 
 ### pbot comment delete
 

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 - `pbot skill show` / `pbot skill path` / `pbot skill version` print the AI skill (`skill/SKILL.md`) that ships with this build — vendored at compile time via `include_str!`, no network round-trip, no side-channel install. `pbot skill show --json` emits a one-line `{ path, version, skill_md }` object so installers / CI can parse it. Pair with the existing version-lint workflow (PR #26) — skill and CLI versions can no longer be out of sync in any direction.
+- `pbot comment create` and `pbot comment update` accept `--body-file <PATH>` and `--body-md-file <PATH>` for bodies that don't fit on the command line (a single argument is hard-capped near 130 KB on Linux by `MAX_ARG_STRLEN`); pass `-` to read the body from stdin. The four body flags are mutually exclusive — passing any two is a parse-time error and never hits the API. The new flags reuse the existing `planebotcli_html::body_to_html` / `md_to_html` path, so `--body-file` is byte-identical to `--body "$(cat PATH)"` (verified in `mock_e2e.rs` against a sample containing backticks, `<`, `&` and Chinese, and against an `![alt](<uuid>)` image for the markdown form).
 - New `build-linux-deb` job in `release.yml` (runs alongside the existing
   `build-windows-msi` / `build-mac-dmg` jobs) builds Debian packages for both
   `x86_64-unknown-linux-gnu` (`amd64`, on `ubuntu-22.04`) and

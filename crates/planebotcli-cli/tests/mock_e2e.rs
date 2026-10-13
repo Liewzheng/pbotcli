@@ -5,9 +5,10 @@
 //! The binary is located via cargo's `CARGO_BIN_EXE_planebotcli`. Proxies are
 //! stripped from the child env so local mockito traffic is not hijacked.
 
-use std::process::Command;
+use std::io::Write;
+use std::process::{Command, Stdio};
 
-use mockito::Server;
+use mockito::{Matcher, Server};
 
 const BIN: &str = env!("CARGO_BIN_EXE_planebotcli");
 
@@ -23,6 +24,30 @@ fn run(args: &[&str], base_url: &str) -> std::process::Output {
         .env_remove("HTTPS_PROXY")
         .output()
         .expect("failed to spawn planebotcli")
+}
+
+fn run_with_stdin(args: &[&str], base_url: &str, stdin_data: &[u8]) -> std::process::Output {
+    let mut child = Command::new(BIN)
+        .args(args)
+        .env("PLANE_BASE_URL", base_url)
+        .env("PLANE_API_KEY", "test-key")
+        .env("PLANE_WORKSPACE", "ws")
+        .env_remove("http_proxy")
+        .env_remove("https_proxy")
+        .env_remove("HTTP_PROXY")
+        .env_remove("HTTPS_PROXY")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn planebotcli");
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin piped")
+        .write_all(stdin_data)
+        .expect("failed to write stdin");
+    child.wait_with_output().expect("failed to wait")
 }
 
 fn stdout_of(out: &std::process::Output) -> String {
@@ -461,80 +486,362 @@ fn relations_rm_reports_the_missing_endpoint() {
     assert!(err.contains("no relations delete endpoint"), "{err}");
 }
 
+// ---------------------------------------------------------------------------
+// comment create / update — --body-file, --body-md-file, and `-` for stdin.
+//
+// Each test proves one slice of the PLANECLI-73 contract:
+//   - the four body flags are mutually exclusive (clap parse error, no HTTP),
+//   - a missing / empty file produces Validation + exit 5 with the flag in
+//     the hint,
+//   - the file / stdin path renders byte-identical `comment_html` to the
+//     inline `--body` form (the equivalence to `--body-md` includes the
+//     `![alt](<uuid>)` image path),
+//   - a body larger than the 131072-byte single-argument cap posts cleanly
+//     through `--body-file`.
+// ---------------------------------------------------------------------------
+
+const COMMENT_BODY: &str = "see `code` <here> & 中文\n\nsecond paragraph";
+const COMMENT_BODY_MD: &str =
+    "# heading\n\n- a\n- b\n\nsee ![shot](11111111-2222-3333-4444-555555555555)";
+const COMMENT_RESPONSE: &str = r#"{"id":"c1","comment_html":"","comment_stripped":"","actor":"u1","created_at":"2026-01-02T00:00:00Z","updated_at":"2026-01-02T00:00:00Z"}"#;
+
+/// Mock the reads every `comment` command makes on the way to its write —
+/// `locate_issue` lists projects, the project detail, the project's items,
+/// and the readback of the comment needs the member map.
+fn mock_comment_reads(server: &mut Server, items: &str) {
+    mock_project_reads(server, items);
+}
+
+/// Write `body` to a unique temp file and return the path.
+fn write_temp_body(body: &str) -> std::path::PathBuf {
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "pbot-comment-test-{}-{}.txt",
+        std::process::id(),
+        COMMENT_TEMP_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+    ));
+    std::fs::write(&path, body).expect("failed to write temp body");
+    path
+}
+
+static COMMENT_TEMP_COUNTER: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
 #[test]
-fn doc_show_without_project_hints_at_minus_p_on_workspace_404() {
+fn comment_create_body_file_matches_inline_body_byte_for_byte() {
     let mut server = Server::new();
-    let workspace_page_get = server
+    mock_comment_reads(&mut server, ITEMS);
+    let expected_html = planebotcli_html::body_to_html(COMMENT_BODY);
+    let post = server
         .mock(
-            "GET",
-            "/api/v1/workspaces/ws/pages/7880a16b-2067-47e1-8bba-c75246545b6d/",
+            "POST",
+            "/api/v1/workspaces/ws/projects/p1/work-items/wi1/comments/",
         )
-        .with_status(404)
+        .match_body(Matcher::Json(
+            serde_json::json!({"comment_html": expected_html}),
+        ))
+        .with_status(201)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"detail":"Not found"}"#)
-        .expect_at_least(1)
-        .create();
-    let any_other = server
-        .mock("GET", mockito::Matcher::Any)
-        .with_status(500)
-        .expect(0)
+        .with_body(COMMENT_RESPONSE)
+        .expect(2)
         .create();
 
-    let out = run(
+    let inline = run(
         &[
-            "doc",
-            "show",
-            "7880a16b-2067-47e1-8bba-c75246545b6d",
+            "comment",
+            "create",
+            "DEMO-1",
+            "-p",
+            "Demo",
+            "--body",
+            COMMENT_BODY,
             "--json",
             "--no-cache",
         ],
         &server.url(),
     );
-    assert_eq!(out.status.code(), Some(3));
-    let err = String::from_utf8_lossy(&out.stderr);
     assert!(
-        err.contains("Resource not found (HTTP 404)"),
-        "expected the underlying 404 message to be preserved: {err}"
+        inline.status.success(),
+        "inline: stderr: {}",
+        String::from_utf8_lossy(&inline.stderr)
+    );
+
+    let file = write_temp_body(COMMENT_BODY);
+    let from_file = run(
+        &[
+            "comment",
+            "create",
+            "DEMO-1",
+            "-p",
+            "Demo",
+            "--body-file",
+            file.to_string_lossy().as_ref(),
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
     );
     assert!(
-        err.contains("Hint:"),
-        "expected a hint line on stderr: {err}"
+        from_file.status.success(),
+        "from_file: stderr: {}",
+        String::from_utf8_lossy(&from_file.stderr)
     );
-    assert!(
-        err.contains("-p <project>"),
-        "expected the hint to name the -p flag: {err}"
-    );
-    workspace_page_get.assert();
-    any_other.assert();
+
+    post.assert();
+    std::fs::remove_file(&file).ok();
 }
 
 #[test]
-fn doc_show_with_project_unaffected_by_workspace_hint_change() {
+fn comment_create_body_md_file_matches_inline_body_md_with_image() {
     let mut server = Server::new();
-    mock_project_reads(&mut server, ITEMS);
-    let page_uuid = "5963a34f-1038-43b2-90aa-cc2b183a30e2";
-    let project_page = server
+    mock_comment_reads(&mut server, ITEMS);
+    let expected_html = planebotcli_html::md_to_html(COMMENT_BODY_MD);
+    let post = server
         .mock(
-            "GET",
-            format!("/api/v1/workspaces/ws/projects/p1/pages/{page_uuid}/").as_str(),
+            "POST",
+            "/api/v1/workspaces/ws/projects/p1/work-items/wi1/comments/",
         )
-        .with_status(200)
+        .match_body(Matcher::Json(
+            serde_json::json!({"comment_html": expected_html}),
+        ))
+        .with_status(201)
         .with_header("content-type", "application/json")
-        .with_body(r#"{"id":"5963a34f-1038-43b2-90aa-cc2b183a30e2","name":"Spec","description_html":"<p>body</p>","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-02T00:00:00Z"}"#)
+        .with_body(COMMENT_RESPONSE)
+        .expect(2)
         .create();
-    let any_other = server
-        .mock("GET", mockito::Matcher::Any)
-        .with_status(500)
+
+    let inline = run(
+        &[
+            "comment",
+            "create",
+            "DEMO-1",
+            "-p",
+            "Demo",
+            "--body-md",
+            COMMENT_BODY_MD,
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        inline.status.success(),
+        "inline: stderr: {}",
+        String::from_utf8_lossy(&inline.stderr)
+    );
+
+    let file = write_temp_body(COMMENT_BODY_MD);
+    let from_file = run(
+        &[
+            "comment",
+            "create",
+            "DEMO-1",
+            "-p",
+            "Demo",
+            "--body-md-file",
+            file.to_string_lossy().as_ref(),
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        from_file.status.success(),
+        "from_file: stderr: {}",
+        String::from_utf8_lossy(&from_file.stderr)
+    );
+
+    post.assert();
+    std::fs::remove_file(&file).ok();
+}
+
+#[test]
+fn comment_create_two_body_flags_rejected_at_parse_with_no_http() {
+    let mut server = Server::new();
+    mock_comment_reads(&mut server, ITEMS);
+    let post = server
+        .mock("POST", mockito::Matcher::Any)
+        .with_status(201)
         .expect(0)
         .create();
 
     let out = run(
         &[
-            "doc",
-            "show",
-            page_uuid,
+            "comment",
+            "create",
+            "DEMO-1",
             "-p",
             "Demo",
+            "--body",
+            "x",
+            "--body-md",
+            "y",
+            "--json",
+        ],
+        &server.url(),
+    );
+    assert_eq!(out.status.code(), Some(2));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("cannot be used with"),
+        "stderr did not name the conflicting flags: {err}"
+    );
+    post.assert();
+
+    let out2 = run(
+        &[
+            "comment",
+            "create",
+            "DEMO-1",
+            "-p",
+            "Demo",
+            "--body-file",
+            "/tmp/whatever",
+            "--body-md-file",
+            "/tmp/whatever2",
+            "--json",
+        ],
+        &server.url(),
+    );
+    assert_eq!(out2.status.code(), Some(2));
+    post.assert();
+}
+
+#[test]
+fn comment_create_missing_body_file_exits_5_with_flag_in_message() {
+    let server = Server::new();
+    let out = run(
+        &[
+            "comment",
+            "create",
+            "DEMO-1",
+            "-p",
+            "Demo",
+            "--body-file",
+            "/no/such/file/pbot-missing.txt",
+            "--json",
+        ],
+        &server.url(),
+    );
+    assert_eq!(out.status.code(), Some(5));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("--body-file"),
+        "error message should name --body-file: {err}"
+    );
+    assert!(err.contains("/no/such/file"), "{err}");
+}
+
+#[test]
+fn comment_create_empty_body_file_exits_5() {
+    let mut server = Server::new();
+    mock_comment_reads(&mut server, ITEMS);
+    let post = server
+        .mock("POST", mockito::Matcher::Any)
+        .with_status(201)
+        .expect(0)
+        .create();
+    let file = write_temp_body("");
+
+    let out = run(
+        &[
+            "comment",
+            "create",
+            "DEMO-1",
+            "-p",
+            "Demo",
+            "--body-file",
+            file.to_string_lossy().as_ref(),
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert_eq!(out.status.code(), Some(5));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("empty"), "{err}");
+    assert!(err.contains("--body-file"), "{err}");
+    post.assert();
+    std::fs::remove_file(&file).ok();
+}
+
+#[test]
+fn comment_create_non_utf8_body_file_exits_5_with_flag_in_message() {
+    let mut server = Server::new();
+    mock_comment_reads(&mut server, ITEMS);
+    let post = server
+        .mock("POST", mockito::Matcher::Any)
+        .with_status(201)
+        .expect(0)
+        .create();
+    // `\xff\xfe` is not valid UTF-8 — `std::fs::read_to_string` returns
+    // `InvalidData` ("stream did not contain valid UTF-8"), which the helper
+    // wraps in `PlaneError::validation_with_hint` so the user sees a clear
+    // validation message naming the flag.
+    let file = write_temp_body("");
+
+    {
+        use std::io::Write;
+        let mut f = std::fs::File::create(&file).expect("create");
+        f.write_all(b"\xff\xfe").expect("write");
+    }
+
+    let out = run(
+        &[
+            "comment",
+            "create",
+            "DEMO-1",
+            "-p",
+            "Demo",
+            "--body-file",
+            file.to_string_lossy().as_ref(),
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert_eq!(out.status.code(), Some(5));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("--body-file"),
+        "error message should name --body-file: {err}"
+    );
+    assert!(
+        err.to_lowercase().contains("utf-8"),
+        "error message should mention the UTF-8 cause: {err}"
+    );
+    post.assert();
+    std::fs::remove_file(&file).ok();
+}
+
+#[test]
+fn comment_create_oversized_body_succeeds_via_file() {
+    let mut server = Server::new();
+    mock_comment_reads(&mut server, ITEMS);
+    // ~200 KB body — above the kernel single-argument cap (MAX_ARG_STRLEN,
+    // 131072 bytes on Linux) where argv-based --body is impossible.
+    let body: String = "a".repeat(200_000);
+    let post = server
+        .mock(
+            "POST",
+            "/api/v1/workspaces/ws/projects/p1/work-items/wi1/comments/",
+        )
+        .with_status(201)
+        .with_header("content-type", "application/json")
+        .with_body(COMMENT_RESPONSE)
+        .expect(1)
+        .create();
+
+    let file = write_temp_body(&body);
+    let out = run(
+        &[
+            "comment",
+            "create",
+            "DEMO-1",
+            "-p",
+            "Demo",
+            "--body-file",
+            file.to_string_lossy().as_ref(),
             "--json",
             "--no-cache",
         ],
@@ -545,11 +852,182 @@ fn doc_show_with_project_unaffected_by_workspace_hint_change() {
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let parsed: serde_json::Value = serde_json::from_str(&stdout_of(&out)).expect("valid JSON");
-    assert_eq!(parsed["id"], page_uuid);
-    assert_eq!(parsed["name"], "Spec");
-    project_page.assert();
-    any_other.assert();
+    post.assert();
+    std::fs::remove_file(&file).ok();
+}
+
+#[test]
+fn comment_create_body_from_stdin_matches_inline_body() {
+    let mut server = Server::new();
+    mock_comment_reads(&mut server, ITEMS);
+    let expected_html = planebotcli_html::body_to_html(COMMENT_BODY);
+    let post = server
+        .mock(
+            "POST",
+            "/api/v1/workspaces/ws/projects/p1/work-items/wi1/comments/",
+        )
+        .match_body(Matcher::Json(
+            serde_json::json!({"comment_html": expected_html}),
+        ))
+        .with_status(201)
+        .with_header("content-type", "application/json")
+        .with_body(COMMENT_RESPONSE)
+        .expect(1)
+        .create();
+
+    let out = run_with_stdin(
+        &[
+            "comment",
+            "create",
+            "DEMO-1",
+            "-p",
+            "Demo",
+            "--body",
+            "-",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+        COMMENT_BODY.as_bytes(),
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "stderr: {stderr}");
+    post.assert();
+}
+
+#[test]
+fn comment_create_empty_body_stdin_hints_name_the_file_flag() {
+    // An empty stdin reports the **file** flag (`--body-file` for the
+    // `--body` route, `--body-md-file` for the `--body-md` route) — the
+    // inline flags take body text, so suggesting them as a file path would
+    // be misleading. Run both routes and the matching file route to pin the
+    // mapping and the unchanged file wording.
+    let file = write_temp_body("");
+
+    for (route_flag, file_flag) in [
+        ("--body", "--body-file"),
+        ("--body-md", "--body-md-file"),
+        ("--body-file", "--body-file"),
+        ("--body-md-file", "--body-md-file"),
+    ] {
+        let mut server = Server::new();
+        mock_comment_reads(&mut server, ITEMS);
+        let post = server
+            .mock("POST", mockito::Matcher::Any)
+            .with_status(201)
+            .expect(0)
+            .create();
+
+        let mut args: Vec<&str> = vec!["comment", "create", "DEMO-1", "-p", "Demo", route_flag];
+        let stdin_or_path;
+        let mut stdin_data: Option<Vec<u8>> = None;
+        if route_flag == "--body" || route_flag == "--body-md" {
+            stdin_or_path = "-".to_string();
+            stdin_data = Some(Vec::new());
+        } else {
+            stdin_or_path = file.to_string_lossy().into_owned();
+        }
+        args.push(&stdin_or_path);
+        args.push("--json");
+        args.push("--no-cache");
+
+        let out = if let Some(data) = stdin_data {
+            run_with_stdin(&args, &server.url(), &data)
+        } else {
+            run(&args, &server.url())
+        };
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(
+            out.status.code(),
+            Some(5),
+            "route {route_flag}: expected exit 5, got {:?}; stderr: {stderr}",
+            out.status.code()
+        );
+        assert!(
+            stderr.contains(file_flag),
+            "route {route_flag}: hint should name {file_flag}; stderr: {stderr}"
+        );
+        post.assert();
+    }
+}
+
+#[test]
+fn comment_create_dot_slash_dash_is_a_literal_file_not_stdin() {
+    let mut server = Server::new();
+    mock_comment_reads(&mut server, ITEMS);
+    let post = server
+        .mock("POST", mockito::Matcher::Any)
+        .with_status(201)
+        .with_body(COMMENT_RESPONSE)
+        .expect(0)
+        .create();
+
+    // `./-` is a path, not stdin — there is no file named `-`, so it should
+    // fail with Validation (exit 5), not consume stdin.
+    let out = run(
+        &[
+            "comment",
+            "create",
+            "DEMO-1",
+            "-p",
+            "Demo",
+            "--body-file",
+            "./-",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert_eq!(out.status.code(), Some(5));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("./-"), "{err}");
+    assert!(err.contains("--body-file"), "{err}");
+    post.assert();
+}
+
+#[test]
+fn comment_update_supports_body_file_for_symmetry() {
+    let mut server = Server::new();
+    mock_comment_reads(&mut server, ITEMS);
+    let expected_html = planebotcli_html::body_to_html(COMMENT_BODY);
+    let post = server
+        .mock(
+            "PATCH",
+            "/api/v1/workspaces/ws/projects/p1/work-items/wi1/comments/c1",
+        )
+        .match_body(Matcher::Json(
+            serde_json::json!({"comment_html": expected_html}),
+        ))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(COMMENT_RESPONSE)
+        .expect(1)
+        .create();
+
+    let file = write_temp_body(COMMENT_BODY);
+    let out = run(
+        &[
+            "comment",
+            "update",
+            "c1",
+            "--issue",
+            "DEMO-1",
+            "-p",
+            "Demo",
+            "--body-file",
+            file.to_string_lossy().as_ref(),
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    post.assert();
+    std::fs::remove_file(&file).ok();
 }
 
 /// A service principal answers with `name` and `type`, and no person fields.
@@ -607,4 +1085,95 @@ fn whoami_table_keeps_the_human_rows() {
     for field in ["display_name", "first_name", "last_name", "email"] {
         assert!(err.contains(field), "{field} missing from {err}");
     }
+}
+
+#[test]
+fn doc_show_with_project_unaffected_by_workspace_hint_change() {
+    let mut server = Server::new();
+    mock_project_reads(&mut server, ITEMS);
+    let page_uuid = "5963a34f-1038-43b2-90aa-cc2b183a30e2";
+    let project_page = server
+        .mock(
+            "GET",
+            format!("/api/v1/workspaces/ws/projects/p1/pages/{page_uuid}/").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"id":"5963a34f-1038-43b2-90aa-cc2b183a30e2","name":"Spec","description_html":"<p>body</p>","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-02T00:00:00Z"}"#)
+        .create();
+    let any_other = server
+        .mock("GET", mockito::Matcher::Any)
+        .with_status(500)
+        .expect(0)
+        .create();
+
+    let out = run(
+        &[
+            "doc",
+            "show",
+            page_uuid,
+            "-p",
+            "Demo",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout_of(&out)).expect("valid JSON");
+    assert_eq!(parsed["id"], page_uuid);
+    assert_eq!(parsed["name"], "Spec");
+    project_page.assert();
+    any_other.assert();
+}
+
+#[test]
+fn doc_show_without_project_hints_at_minus_p_on_workspace_404() {
+    let mut server = Server::new();
+    let workspace_page_get = server
+        .mock(
+            "GET",
+            "/api/v1/workspaces/ws/pages/7880a16b-2067-47e1-8bba-c75246545b6d/",
+        )
+        .with_status(404)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"detail":"Not found"}"#)
+        .expect_at_least(1)
+        .create();
+    let any_other = server
+        .mock("GET", mockito::Matcher::Any)
+        .with_status(500)
+        .expect(0)
+        .create();
+
+    let out = run(
+        &[
+            "doc",
+            "show",
+            "7880a16b-2067-47e1-8bba-c75246545b6d",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert_eq!(out.status.code(), Some(3));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("Resource not found (HTTP 404)"),
+        "expected the underlying 404 message to be preserved: {err}"
+    );
+    assert!(
+        err.contains("Hint:"),
+        "expected a hint line on stderr: {err}"
+    );
+    assert!(
+        err.contains("-p <project>"),
+        "expected the hint to name the -p flag: {err}"
+    );
+    workspace_page_get.assert();
+    any_other.assert();
 }
