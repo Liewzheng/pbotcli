@@ -1,4 +1,4 @@
-# planebotcli (pbot)
+# pbotcli (pbot)
 
 `pbot` is an independent command-line client for [Plane.so](https://plane.so) (SaaS or
 self-hosted): projects, work items, cycles, modules, documents, labels, states, intake queues,
@@ -8,26 +8,41 @@ Its defining feature is **fuzzy resource resolution**: anywhere a resource is ex
 pass a name, an identifier (`ABC-123`), or a UUID. Close names resolve on their own —
 `pbot wi ls -p "Front"` finds `Frontend`.
 
-This repository is `planebotcli`: a Cargo workspace under `crates/`. The Python implementation that
+This repository is `pbotcli`: a Cargo workspace under `crates/`. The Python implementation that
 used to ship in this repository has been removed; the docs in `docs/` that describe it are kept
 as historical reference.
 
 ## Install
 
 Pre-built binaries and installers are published on the
-[Releases page](https://github.com/Liewzheng/planebotcli/releases). Pick whichever
+[Releases page](https://github.com/Liewzheng/pbotcli/releases). Pick whichever
 form fits your platform — the shell installer is the same artifact on Linux and
 macOS and is the fastest way to try the CLI; the GUI installers (`dmg` / `msi`)
 are there for users who want a double-click install.
 
+### Homebrew (macOS / Linux)
+
+The tap at [`Liewzheng/homebrew-tap`](https://github.com/Liewzheng/homebrew-tap)
+publishes the CLI as a Homebrew formula called `pbotcli`:
+
+```sh
+brew tap Liewzheng/tap
+brew install pbotcli
+```
+
+The formula is rebuilt from the release tarball at every tagged release by the
+`publish-homebrew-formula` job in `release.yml`; you get the same `pbotcli` and
+`pbot` binaries the other installers ship, installed into the standard
+Homebrew prefix.
+
 ### macOS
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Liewzheng/planebotcli/releases/latest/download/planebotcli-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Liewzheng/pbotcli/releases/latest/download/pbotcli-installer.sh | sh
 ```
 
-Or download a `.dmg` from the latest release page (Apple Silicon: `planebotcli-aarch64-apple-darwin.dmg`;
-Intel: `planebotcli-x86_64-apple-darwin.dmg`), open it, and drag `planebotcli` and `pbot` into a
+Or download a `.dmg` from the latest release page (Apple Silicon: `pbotcli-aarch64-apple-darwin.dmg`;
+Intel: `pbotcli-x86_64-apple-darwin.dmg`), open it, and drag `pbotcli` and `pbot` into a
 directory on your `$PATH` — common choices are `~/bin` (user-local, no sudo needed),
 `/opt/homebrew/bin` (Homebrew on Apple Silicon), or `/usr/local/bin` (system-wide; on newer
 macOS this directory may require `sudo` to write to).
@@ -35,34 +50,34 @@ macOS this directory may require `sudo` to write to).
 ### Linux
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Liewzheng/planebotcli/releases/latest/download/planebotcli-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Liewzheng/pbotcli/releases/latest/download/pbotcli-installer.sh | sh
 ```
 
 Or download a `.deb` from the latest release page and install it with your
 package manager — on Debian / Ubuntu (x86_64):
 
 ```sh
-apt install ./planebotcli-cli_<version>_amd64.deb      # or sudo apt install
+apt install ./pbotcli-cli_<version>_amd64.deb      # or sudo apt install
 ```
 
-The arm64 build is `planebotcli-cli_<version>_arm64.deb` on aarch64 hosts;
-`<version>` is the release's version number (e.g. `1.4.2`). Both are built by
+The arm64 build is `pbotcli-cli_<version>_arm64.deb` on aarch64 hosts;
+`<version>` is the release's version number (e.g. `1.5.0`). Both are built by
 the `build-linux-deb` job in `release.yml` — natively on `ubuntu-22.04`
 (amd64) and `ubuntu-22.04-arm` (arm64), so no cross-compilation is involved.
-Each `.deb` ships both the `planebotcli` binary and the `pbot` binary in
+Each `.deb` ships both the `pbotcli` binary and the `pbot` binary in
 `/usr/bin/` — they are the two `[[bin]]` targets in
-`planebotcli-cli/Cargo.toml`, and `pbot` is a short alias of the same CLI,
+`crates/pbotcli-cli/Cargo.toml`, and `pbot` is a short alias of the same CLI,
 not a symlink.
 
 ### Windows
 
 ```powershell
-irm https://github.com/Liewzheng/planebotcli/releases/latest/download/planebotcli-installer.ps1 | iex
+irm https://github.com/Liewzheng/pbotcli/releases/latest/download/pbotcli-installer.ps1 | iex
 ```
 
-Or download `planebotcli-x86_64-pc-windows-msvc.msi` from the latest release page and
+Or download `pbotcli-x86_64-pc-windows-msvc.msi` from the latest release page and
 double-click to install through the standard Windows installer UI. As an
-alternative, download `planebotcli-x86_64-pc-windows-msvc.zip` and unzip it
+alternative, download `pbotcli-x86_64-pc-windows-msvc.zip` and unzip it
 somewhere on your `%PATH%`. ARM64 Windows is not currently a release target —
 use the shell installer if you're on such a device.
 
@@ -71,14 +86,14 @@ use the shell installer if you're on such a device.
 The CLI is not published to crates.io yet — install it from a checkout:
 
 ```bash
-cargo install --path crates/planebotcli-cli --locked
+cargo install --path crates/pbotcli-cli --locked
 ```
 
 That installs both binaries into `~/.cargo/bin`:
 
 | Binary | Notes |
 |---|---|
-| `planebotcli` | Full package name. |
+| `pbotcli` | Full package name. |
 | `pbot` | Short alias of the same binary; used in every example here. |
 
 Update later with the same command from a fresh checkout (`--force` if the version is unchanged).

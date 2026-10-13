@@ -240,7 +240,7 @@ jobs:
         run: |
           set -euo pipefail
           cd downloaded
-          tar -xJf "planebotcli-cli-${{ matrix.target }}.tar.xz"
+          tar -xJf "pbotcli-cli-${{ matrix.target }}.tar.xz"
       - name: Stage dmg payload
         run: |
           set -euo pipefail
@@ -251,13 +251,13 @@ jobs:
             exit 1
           fi
           mkdir -p dmg-payload
-          mv "downloaded/planebotcli-cli-${{ matrix.target }}/planebotcli" dmg-payload/planebotcli
-          mv "downloaded/planebotcli-cli-${{ matrix.target }}/pbot" dmg-payload/pbot
+          mv "downloaded/pbotcli-cli-${{ matrix.target }}/pbotcli" dmg-payload/pbotcli
+          mv "downloaded/pbotcli-cli-${{ matrix.target }}/pbot" dmg-payload/pbot
           cat > dmg-payload/INSTALL.txt <<EOF
-          planebotcli + pbot
+          pbotcli + pbot
           ================
 
-          Drag 'planebotcli' and 'pbot' to a directory on your \$PATH.
+          Drag 'pbotcli' and 'pbot' to a directory on your \$PATH.
           Common choices (any of these is fine):
 
               ~/bin                  # user-local, no sudo needed
@@ -265,13 +265,13 @@ jobs:
               /opt/homebrew/bin      # Homebrew on Apple Silicon
 
           Verify with:
-              \$ planebotcli --version
-              planebotcli ${VERSION}
+              \$ pbotcli --version
+              pbotcli ${VERSION}
 
           Or use the shell installer instead:
-              curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Liewzheng/planebotcli/releases/latest/download/planebotcli-installer.sh | sh
+              curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Liewzheng/pbotcli/releases/latest/download/pbotcli-installer.sh | sh
 
-          Documentation: https://github.com/Liewzheng/planebotcli
+          Documentation: https://github.com/Liewzheng/pbotcli
           EOF
       - name: Install create-dmg
         # Homebrew formulae don't support @version pinning, so this pulls
@@ -283,25 +283,25 @@ jobs:
         run: |
           set -euo pipefail
           create-dmg \
-            --volname "planebotcli ${VERSION}" \
+            --volname "pbotcli ${VERSION}" \
             --window-pos 200 120 \
             --window-size 600 320 \
             --icon-size 80 \
-            --icon planebotcli 150 100 \
-            --hide-extension planebotcli \
+            --icon pbotcli 150 100 \
+            --hide-extension pbotcli \
             --icon pbot 150 200 \
             --hide-extension pbot \
             --icon INSTALL.txt 150 280 \
-            "planebotcli-${{ matrix.target }}.dmg" \
+            "pbotcli-${{ matrix.target }}.dmg" \
             dmg-payload/
       - name: Upload dmg artifact
         uses: actions/upload-artifact@v7
         with:
           name: artifacts-build-dmg-${{ matrix.target }}
-          path: planebotcli-${{ matrix.target }}.dmg
+          path: pbotcli-${{ matrix.target }}.dmg
 
   # Build the Windows MSI installer via cargo-wix (cargo-dist 0.32's
-  # WiX-key detection does not pick up the GUIDs in planebotcli-cli's
+  # WiX-key detection does not pick up the GUIDs in pbotcli-cli's
   # Cargo.toml under our workspace layout; running cargo-wix directly
   # sidesteps that). The .msi lands on the GitHub release alongside
   # cargo-dist's other installers.
@@ -327,7 +327,7 @@ jobs:
         # the `cargo build --release --target …` below skips several minutes
         # of incremental recompiles on cache hits. The path is
         # `<workspace-root> -> <target-dir>`; the workspace root is the
-        # repo root, not `planebotcli-cli/` (which doesn't exist here —
+        # repo root, not `pbotcli-cli/` (which doesn't exist here —
         # the crate is under crates/), so naming that directory left the
         # cache permanently empty.
         uses: Swatinem/rust-cache@v2
@@ -353,9 +353,9 @@ jobs:
           if [ ! -x ~/.cargo/bin/cargo-wix.exe ]; then
             cargo install cargo-wix --version 0.3.9 --locked
           fi
-      - name: Build planebotcli-cli (x86_64-pc-windows-msvc, release)
+      - name: Build pbotcli-cli (x86_64-pc-windows-msvc, release)
         # cargo-wix 0.3.9 expects the binary at
-        # `target/x86_64-pc-windows-msvc/release/planebotcli.exe`
+        # `target/x86_64-pc-windows-msvc/release/pbotcli.exe`
         # (path encoded in `wix/main.wxs`). `--locked` pins the dep graph
         # from Cargo.lock so the build is reproducible. We build from
         # source here rather than pulling from cargo-dist's tarball —
@@ -363,15 +363,15 @@ jobs:
         shell: bash
         run: |
           cargo build --release --target x86_64-pc-windows-msvc --locked \
-            --package planebotcli-cli --bin planebotcli
+            --package pbotcli-cli --bin pbotcli
       - name: Verify binary exists
         # cargo-wix exits non-zero with a generic error if the binary
         # path it expects is missing — fail loudly here so the next step
         # shows a clear cause rather than the cargo-wix error.
         shell: bash
         run: |
-          if [ ! -f target/x86_64-pc-windows-msvc/release/planebotcli.exe ]; then
-            echo "::error::expected binary not found at target/x86_64-pc-windows-msvc/release/planebotcli.exe"
+          if [ ! -f target/x86_64-pc-windows-msvc/release/pbotcli.exe ]; then
+            echo "::error::expected binary not found at target/x86_64-pc-windows-msvc/release/pbotcli.exe"
             exit 1
           fi
       - name: Generate MSI
@@ -384,7 +384,7 @@ jobs:
         # silently produced no upload).
         shell: bash
         run: |
-          cargo wix --package planebotcli-cli --nocapture
+          cargo wix --package pbotcli-cli --nocapture
       - name: Verify MSI was produced
         # cargo-wix exits 0 even when its output path is empty / different
         # from the expected glob (e.g. after a future flag change). Fail
@@ -459,14 +459,14 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: . -> target
-      - name: Build planebotcli-cli (${{ matrix.target }}, release)
-        # Both [[bin]] targets — planebotcli (src/main.rs) and pbot
+      - name: Build pbotcli-cli (${{ matrix.target }}, release)
+        # Both [[bin]] targets — pbotcli (src/main.rs) and pbot
         # (src/bin/pbot.rs) — so the .deb ships the same surface as
-        # `cargo install --path crates/planebotcli-cli`.
+        # `cargo install --path crates/pbotcli-cli`.
         run: |
           set -euo pipefail
           cargo build --release --target ${{ matrix.target }} --locked \
-            --package planebotcli-cli --bins
+            --package pbotcli-cli --bins
       - name: Cache nfpm
         # Keyed on version + arch so the extracted binary survives across
         # runs instead of being re-downloaded on every release.
@@ -501,9 +501,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p deb-payload/usr/bin
-          cp target/${{ matrix.target }}/release/planebotcli deb-payload/usr/bin/planebotcli
+          cp target/${{ matrix.target }}/release/pbotcli deb-payload/usr/bin/pbotcli
           cp target/${{ matrix.target }}/release/pbot deb-payload/usr/bin/pbot
-          chmod 0755 deb-payload/usr/bin/planebotcli deb-payload/usr/bin/pbot
+          chmod 0755 deb-payload/usr/bin/pbotcli deb-payload/usr/bin/pbot
           ls -la deb-payload/usr/bin/
       - name: Derive .deb version + filename
         id: deb
@@ -520,7 +520,7 @@ jobs:
             exit 1
           fi
           echo "version=${DEB_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "name=planebotcli-cli_${DEB_VERSION}_${{ matrix.nfpm_arch }}.deb" >> "$GITHUB_OUTPUT"
+          echo "name=pbotcli-cli_${DEB_VERSION}_${{ matrix.nfpm_arch }}.deb" >> "$GITHUB_OUTPUT"
       - name: Package .deb
         env:
           NFPM_VERSION: ${{ steps.deb.outputs.version }}
@@ -619,14 +619,70 @@ jobs:
 
           gh release create "${{ needs.plan.outputs.tag }}" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
 
+  # Publish the cargo-dist-generated Homebrew formula into the personal tap
+  # `github.com/Liewzheng/homebrew-tap` at every tagged release. Hand-merged
+  # here by PLANECLI-86 — cargo-dist's `allow-dirty = ["ci"]` (set in
+  # dist-workspace.toml to preserve the three other hand-written jobs:
+  # `build-mac-dmg`, `build-windows-msi`, `build-linux-deb`) keeps the
+  # generator from rewriting this file, so this publish job is committed
+  # verbatim from the canonical output of `dist generate --mode=ci` against
+  # the same config. Anyone modifying it should diff against a fresh
+  # generation to catch drift.
+  publish-homebrew-formula:
+    needs:
+      - plan
+      - host
+    runs-on: "ubuntu-22.04"
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PLAN: ${{ needs.plan.outputs.val }}
+      GITHUB_USER: "axo bot"
+      GITHUB_EMAIL: "admin+bot@axo.dev"
+    if: ${{ !fromJson(needs.plan.outputs.val).announcement_is_prerelease || fromJson(needs.plan.outputs.val).publish_prereleases }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: true
+          repository: "Liewzheng/homebrew-tap"
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      # So we have access to the formula
+      - name: Fetch homebrew formulae
+        uses: actions/download-artifact@v8
+        with:
+          pattern: artifacts-*
+          path: Formula/
+          merge-multiple: true
+      # This is extra complex because you can make your Formula name not match your app name
+      # so we need to find releases with a *.rb file, and publish with that filename.
+      - name: Commit formula files
+        run: |
+          git config --global user.name "${GITHUB_USER}"
+          git config --global user.email "${GITHUB_EMAIL}"
+
+          for release in $(echo "$PLAN" | jq --compact-output '.releases[] | select([.artifacts[] | endswith(".rb")] | any)'); do
+            filename=$(echo "$release" | jq '.artifacts[] | select(endswith(".rb"))' --raw-output)
+            name=$(echo "$filename" | sed "s/\.rb$//")
+            version=$(echo "$release" | jq .app_version --raw-output)
+
+            export PATH="/home/linuxbrew/.linuxbrew/bin:$PATH"
+            brew update
+            # We avoid reformatting user-provided data such as the app description and homepage.
+            brew style --except-cops FormulaAudit/Homepage,FormulaAudit/Desc,FormulaAuditStrict --fix "Formula/${filename}" || true
+
+            git add "Formula/${filename}"
+            git commit -m "${name} ${version}"
+          done
+          git push
+
   announce:
     needs:
       - plan
       - host
+      - publish-homebrew-formula
     # use "always() && ..." to allow us to wait for all publish jobs while
     # still allowing individual publish jobs to skip themselves (for prereleases).
     # "host" however must run to completion, no skipping allowed!
-    if: ${{ always() && needs.host.result == 'success' }}
+    if: ${{ always() && needs.host.result == 'success' && (needs.publish-homebrew-formula.result == 'skipped' || needs.publish-homebrew-formula.result == 'success') }}
     runs-on: "ubuntu-22.04"
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

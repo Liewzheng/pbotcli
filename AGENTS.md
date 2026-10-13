@@ -1,4 +1,4 @@
-# planebotcli (pbot)
+# pbotcli (pbot)
 
 `pbot` is an independent command-line client for [Plane.so](https://plane.so) (SaaS or self-hosted):
 projects, work items, cycles, modules, documents, labels, states, intake queues, comments, and
@@ -12,7 +12,7 @@ This project is **not a fork, a port, or a downstream of `plane-cli`**, and `pla
 upstream. `pbot` began from that codebase and has since evolved on its own; the two have no
 relationship to maintain.
 
-- The only home is `github.com/Liewzheng/planebotcli`. There is nowhere to sync from and nobody to
+- The only home is `github.com/Liewzheng/pbotcli`. There is nowhere to sync from and nobody to
   send pull requests to.
 - Do not reintroduce the vocabulary of a fork: no "upstream", no "syncing with upstream", no PRs
   against another repository, no mirroring branches back and forth.
@@ -29,7 +29,7 @@ All docs, comments, and commit messages in English.
 Everything runs through `cargo`; common tasks are wrapped in the Makefile.
 
 ```bash
-make install                       # cargo install the CLI locally (pbot + planebotcli)
+make install                       # cargo install the CLI locally (pbot + pbotcli)
 make build                         # cargo build --workspace
 make test                          # cargo test --workspace
 make test-v                        # the same, showing test output (--nocapture)
@@ -46,7 +46,7 @@ and `cargo test --locked --workspace` on Linux, macOS, and Windows — all three
 config paths and permission handling are platform-sensitive. A green local
 `make check` means a green CI run.
 
-Single test: `cargo test --workspace <name>` (e.g. `cargo test -p planebotcli-resolve resolve_project`),
+Single test: `cargo test --workspace <name>` (e.g. `cargo test -p pbotcli-resolve resolve_project`),
 or `cargo run --bin pbot -- wi ls` for the CLI without installing it. Edition 2024, rustfmt
 defaults, clippy clean at `-D warnings`.
 
@@ -54,19 +54,19 @@ defaults, clippy clean at `-D warnings`.
 
 ```
 crates/
-  planebotcli-core       # Config (precedence: flags > env > config file, discovered from ~/.config/pbot/config.toml, ~/.pbot, ~/.planecli, ~/.plane_api), PlaneError + exit codes
-  planebotcli-types      # serde DTOs for every API resource, plus the *Write request bodies
-  planebotcli-cache      # TTL disk cache: one JSON file per key, invalidate by key prefix
-  planebotcli-client     # reqwest async client for the Plane v1 API: X-Api-Key, cursor pagination,
-                         # retry, HTTP→PlaneError mapping, attachment upload, cache wiring
-  planebotcli-resolve    # fuzzy matching (rapidfuzz, threshold 60), resolve_<resource> helpers
-  planebotcli-html       # plain text / markdown subset → HTML, linkify, strip_html_tags
-  planebotcli-format     # output_json (stdout) / output_table (stderr)
-  planebotcli-cli        # clap command tree and handlers (lib.rs), JSON/table views (render.rs)
+  pbotcli-core       # Config (precedence: flags > env > config file, discovered from ~/.config/pbot/config.toml, ~/.pbot, ~/.planecli, ~/.plane_api), PlaneError + exit codes
+  pbotcli-types      # serde DTOs for every API resource, plus the *Write request bodies
+  pbotcli-cache      # TTL disk cache: one JSON file per key, invalidate by key prefix
+  pbotcli-client     # reqwest async client for the Plane v1 API: X-Api-Key, cursor pagination,
+                     # retry, HTTP→PlaneError mapping, attachment upload, cache wiring
+  pbotcli-resolve    # fuzzy matching (rapidfuzz, threshold 60), resolve_<resource> helpers
+  pbotcli-html       # plain text / markdown subset → HTML, linkify, strip_html_tags
+  pbotcli-format     # output_json (stdout) / output_table (stderr)
+  pbotcli-cli        # clap command tree and handlers (lib.rs), JSON/table views (render.rs)
 ```
 
-`planebotcli-cli` builds both binaries — `planebotcli` (`src/main.rs`) and `pbot`
-(`src/bin/pbot.rs`); each is a thin `Cli::parse()` → `planebotcli_cli::run` wrapper. Request flow:
+`pbotcli-cli` builds both binaries — `pbotcli` (`src/main.rs`) and `pbot`
+(`src/bin/pbot.rs`); each is a thin `Cli::parse()` → `pbotcli_cli::run` wrapper. Request flow:
 **clap command → resolve → client (cache | HTTP) → render view → format**. Top level: `crates/`
 (the workspace), `docs/` (the CLI command reference, the Plane API reference, and the historical
 Python-era documents), `skill/` (the agent skill), `scripts/e2e.sh`.
@@ -74,22 +74,22 @@ Python-era documents), `skill/` (the agent skill), `scripts/e2e.sh`.
 ## Conventions
 
 - **Commands are clap subcommands.** The tree is the `Cli`/`Command` enums in
-  `crates/planebotcli-cli/src/lib.rs`; each handler is a `cmd_*` function taking `&PlaneClient` and
+  `crates/pbotcli-cli/src/lib.rs`; each handler is a `cmd_*` function taking `&PlaneClient` and
   `json: bool`, dispatched from the `match` in `run`. Aliases go on the variant
   (`#[command(alias = "ls")]`, `visible_alias = "issues"`), short flags via `#[arg(long, short = 'p')]`,
   and doc comments on variants and fields are the `--help` text.
-- **All HTTP goes through `PlaneClient`** (`crates/planebotcli-client`). A handler never calls
+- **All HTTP goes through `PlaneClient`** (`crates/pbotcli-client`). A handler never calls
   `reqwest` itself: the client owns the `X-Api-Key` header, the `/api/v1` prefix, cursor pagination
   (`paginate`), retry on 429/5xx (5 attempts, linear backoff) and the HTTP→`PlaneError` mapping
   (`map_api_error`).
 - **Reads go through the cache layer.** The client's list methods (`list_projects`, `list_states`, …)
   serve from the TTL disk cache and refresh it; every create/update/delete calls
   `self.invalidate("<resource>:{workspace}[:{project_id}]")` on the way out. The TTLs are the
-  `TTL_*` constants at the top of `planebotcli-client/src/lib.rs`; the global `--no-cache` flag is
+  `TTL_*` constants at the top of `pbotcli-client/src/lib.rs`; the global `--no-cache` flag is
   threaded into `PlaneClient::with_cache` and disables both halves. See
   [ADR-0004](docs/adr/0004-disk-cache-ttls-and-keys.md) (historical).
 - **Errors are typed, and the type carries the exit code.** Return `PlaneError` from
-  `planebotcli-core`: `Auth`=2, `NotFound`=3, `Api`=4, `Validation`=5, `Other`=1. `main.rs` prints
+  `pbotcli-core`: `Auth`=2, `NotFound`=3, `Api`=4, `Validation`=5, `Other`=1. `main.rs` prints
   `Error: …`, then `Hint: …` when the variant has one, and exits with `err.exit_code()`. Build
   user-facing failures with `PlaneError::validation(...)` / `validation_with_hint(...)`, and make the
   hint name the next command to run.
@@ -128,7 +128,7 @@ Python-era documents), `skill/` (the agent skill), `scripts/e2e.sh`.
   [ADR-0008](docs/adr/0008-destructive-deletes-are-documented-not-prompted.md).
 - **The API's own shapes leak, so a few fields are `serde_json::Value`.** Work-item `state`,
   `labels`, and `assignees` come back as raw UUID strings from the detail endpoint and as UUID lists
-  or objects from the list endpoints; `planebotcli-types` keeps those polymorphic fields as `Value`
+  or objects from the list endpoints; `pbotcli-types` keeps those polymorphic fields as `Value`
   and `render.rs` interprets them. Pages use `PageScope` for the two locations (workspace vs
   project), archiving must set `archived_at`, and estimate points have no endpoint at all — they are
   derived from work items with `expand=estimate_point`.
@@ -136,7 +136,7 @@ Python-era documents), `skill/` (the agent skill), `scripts/e2e.sh`.
   tracker URLs in code comments — they are unreachable after delivery. Point to an ADR or guide
   instead.
 - **Tests never hit a real Plane instance.** Unit tests sit next to the code, and
-  `crates/planebotcli-cli/tests/mock_e2e.rs` runs the real binary against a mockito server, pinning
+  `crates/pbotcli-cli/tests/mock_e2e.rs` runs the real binary against a mockito server, pinning
   the `--json` contract and exit codes. Mock the HTTP layer (`mockito`, a `dev-dependency`), and
   prefer testing pure logic (normalizers, fuzzy matching, HTML conversion) directly. The mock e2e
   strips proxy variables from the child environment so local traffic is not hijacked.
@@ -155,14 +155,14 @@ small to track" or "too small for a PR" exemption.
    the merge is on `main`. A finished change with no comment on its item is not done.
 3. **Branch per task**, off `main`, named `<type>/<task>-<slug>` (e.g.
    `feat/PLANECLI-42-relations-remove`). Never commit a task's work straight onto the main branch.
-4. **Open a pull request — and stop there.** Push the branch to the `planebotcli` remote and open a
-   PR against `main` (`gh pr create --repo Liewzheng/planebotcli --base main`). Keep the PR number it
+4. **Open a pull request — and stop there.** Push the branch to the `pbotcli` remote and open a
+   PR against `main` (`gh pr create --repo Liewzheng/pbotcli --base main`). Keep the PR number it
    prints (`gh pr view --json number -q .number` retrieves it) — the review gate needs it. Merging is
    the human's call, made after that gate.
 5. **Never merge into a protected branch by hand.** `main`, `master`, and `dev` — on every remote,
-   `planebotcli`'s `main` included — accept changes only through a merged PR. No
+   `pbotcli`'s `main` included — accept changes only through a merged PR. No
    `git push <remote> <branch>:main`, no `--force`, no local fast-forward that skips review.
-6. **Resync after every merge** — `git fetch planebotcli` and fast-forward the local `main` — so the
+6. **Resync after every merge** — `git fetch pbotcli` and fast-forward the local `main` — so the
    next task branch starts from the merged state.
 7. **Record the change in `CHANGELOG.md` in the same PR.** Every change gets a Keep a Changelog
    entry under `## [Unreleased]` — code, docs, and repository process alike, no exemptions. A change
@@ -206,7 +206,7 @@ jq -r '.consolidated.findings[]? | "[\(.severity)] \(.file):\(.line) — \(.titl
 
 `<base-branch>` is the branch the work was cut from (`main`);
 `<current-branch>` is the branch under review (`git branch --show-current`). Use
-`--base <remote>/main` (e.g. `planebotcli/main`) when `main` is not checked out locally. Fix what
+`--base <remote>/main` (e.g. `pbotcli/main`) when `main` is not checked out locally. Fix what
 is real in the code before pushing and note the rest for the PR disposition. This does **not**
 replace step 1: the PR gate still runs and its findings still get answered there.
 
@@ -220,7 +220,7 @@ replace step 1: the PR gate still runs and its findings still get answered there
    [ -x "$RENG" ] || { echo "reng not found at $RENG — install it or fix PATH, then retry" >&2; exit 1; }
    START=$(date +%s)
    GITHUB_TOKEN=$(gh auth token) timeout 900 "$RENG" review \
-     --mr-url "https://github.com/Liewzheng/planebotcli/pull/<n>" --publish
+     --mr-url "https://github.com/Liewzheng/pbotcli/pull/<n>" --publish
    ```
 
    `timeout 900` turns a hung review into a failure the gate can report. Pass the token through the
@@ -232,7 +232,7 @@ replace step 1: the PR gate still runs and its findings still get answered there
    the report is posted as a **PR review body**, so read it with:
 
    ```bash
-   gh api "repos/Liewzheng/planebotcli/pulls/<n>/reviews" \
+   gh api "repos/Liewzheng/pbotcli/pulls/<n>/reviews" \
      -q '[.[] | select(.body | startswith("# CodeReview Board"))] | last | .body'
    ```
 
@@ -256,7 +256,7 @@ replace step 1: the PR gate still runs and its findings still get answered there
    parse artifact rather than a reviewable item: name it as such in the triage comment and move on.
 4. **Triage every finding and reply to it on the PR — none may be left unanswered.** The report is a
    review body, so there is normally no inline thread to reply in; each round gets its own top-level
-   `gh pr comment <n> --repo Liewzheng/planebotcli --body-file <file>` — separate comments, not one
+   `gh pr comment <n> --repo Liewzheng/pbotcli --body-file <file>` — separate comments, not one
    growing thread — listing every finding in that round and its disposition.
    - **real bug or good suggestion** → fix it on the same branch, push, and reply with what changed;
    - **needs a human decision, or a change too large for this branch** → reply saying so and carry it
@@ -272,10 +272,10 @@ replace step 1: the PR gate still runs and its findings still get answered there
 
 ## Release management
 
-The repository `github.com/Liewzheng/planebotcli` keeps a single long-lived branch, `main` — the
+The repository `github.com/Liewzheng/pbotcli` keeps a single long-lived branch, `main` — the
 release line where every completed task lands through a PR and every release is tagged. Since
 **1.0.0 (2026-09-09) the CLI is the Rust line**
-(`planebotcli` / `pbot`, a Cargo workspace in `crates/`), and the Python line it replaced has since
+(`pbotcli` / `pbot`, a Cargo workspace in `crates/`), and the Python line it replaced has since
 been removed. The version and the changelog are edited on
 `main`, the branch tasks land on; there is no second repository they could be edited in
 (see Identity).
@@ -292,10 +292,10 @@ been removed. The version and the changelog are edited on
   per-finding replies, no shortcut for docs or version bumps — and the **human merges it**. The
   agent never merges and `main` never takes a direct push (see Task workflow).
 - After a release lands, reinstall the local CLI from the merged `main` checkout by
-  default (no need to ask first): `cargo install --path crates/planebotcli-cli --locked`
-  (installs both `planebotcli` and the `pbot` alias into `~/.cargo/bin`).
+  default (no need to ask first): `cargo install --path crates/pbotcli-cli --locked`
+  (installs both `pbotcli` and the `pbot` alias into `~/.cargo/bin`).
 - **Publishing artifacts** (needs the human's go-ahead + external accounts): tag the release and
-  push — `git tag v<version> && git push planebotcli v<version>` — so the committed cargo-dist
+  push — `git tag v<version> && git push pbotcli v<version>` — so the committed cargo-dist
   GitHub Actions workflow builds per-platform archives + shell/powershell installers to the
   Releases page. npm publish needs an npm scope/token (cargo-dist npm installer config);
   crates.io `cargo publish` needs a crates.io token.

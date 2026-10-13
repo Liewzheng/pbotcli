@@ -1,12 +1,12 @@
-# planebotcli Documentation
+# pbotcli Documentation
 
-`planebotcli` is a CLI for [Plane.so](https://plane.so) (SaaS or self-hosted).
+`pbotcli` is a CLI for [Plane.so](https://plane.so) (SaaS or self-hosted).
 It manages projects, work items, cycles, modules, documents, labels, states,
 intake queues, and comments. Its defining feature is **fuzzy resource
 resolution**: any resource can be referenced by a name, an identifier
 (`ABC-123`), or a UUID.
 
-The CLI is the Rust line (`planebotcli`, installed alongside the short `pbot`
+The CLI is the Rust line (`pbotcli`, installed alongside the short `pbot`
 alias); the Python implementation it replaced has been removed from the
 repository, and the documents that describe it are marked as historical
 (see [rust-rewrite.md](rust-rewrite.md)).
@@ -26,7 +26,7 @@ repository, and the documents that describe it are marked as historical
 ## Quick start
 
 ```bash
-cargo install --path crates/planebotcli-cli --locked   # from a checkout
+cargo install --path crates/pbotcli-cli --locked   # from a checkout
 ```
 
 Credentials: environment variables `PLANE_BASE_URL`, `PLANE_API_KEY`,
@@ -34,7 +34,7 @@ Credentials: environment variables `PLANE_BASE_URL`, `PLANE_API_KEY`,
 (TOML), `~/.pbot`, `~/.planecli`, then the legacy `~/.plane_api` (lowercase
 `key=value` lines: `base_url`, `api_key`, `workspace`). Precedence: CLI flags >
 env vars > config file. See
-[crates/planebotcli-core/src/config.rs](../crates/planebotcli-core/src/config.rs)
+[crates/pbotcli-core/src/config.rs](../crates/pbotcli-core/src/config.rs)
 for the file formats and the key-to-env-var mapping.
 
 ## Key concepts

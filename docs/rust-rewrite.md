@@ -1,4 +1,4 @@
-# planebotcli Rust rewrite
+# pbotcli Rust rewrite
 
 > **Delivered.** This was the plan for the Rust rewrite, tracked as **PLANECLI-9**. It has
 > landed: `pbot` is the only CLI in this repository (the Python line, v0.7.0, has been
@@ -45,15 +45,15 @@ milestones: **2026-09-11**.
 Cargo workspace (root Cargo.toml; Python sources stay under src/ during the
 transition)
 crates/
-├── planebotcli-types      # serde DTOs for every API resource + error bodies
-├── planebotcli-client     # reqwest async client: v1 API, X-Api-Key, pagination,
-│                          # attachment 3-step upload, HTTP error mapping
-├── planebotcli-resolve    # fuzzy matching (rapidfuzz) + resolve_<resource>
-├── planebotcli-cache      # TTL disk cache + invalidate
-├── planebotcli-html       # body_to_html / md_to_html / linkify (pulldown-cmark)
-├── planebotcli-format     # JSON → stdout, table → stderr (tabled)
-├── planebotcli-core       # PlaneError (exit codes), config, shared helpers
-└── planebotcli-cli        # clap binary `planebotcli`: command tree, global flags
+├── pbotcli-types      # serde DTOs for every API resource + error bodies
+├── pbotcli-client     # reqwest async client: v1 API, X-Api-Key, pagination,
+│                      # attachment 3-step upload, HTTP error mapping
+├── pbotcli-resolve    # fuzzy matching (rapidfuzz) + resolve_<resource>
+├── pbotcli-cache      # TTL disk cache + invalidate
+├── pbotcli-html       # body_to_html / md_to_html / linkify (pulldown-cmark)
+├── pbotcli-format     # JSON → stdout, table → stderr (tabled)
+├── pbotcli-core       # PlaneError (exit codes), config, shared helpers
+└── pbotcli-cli        # clap binary `pbotcli`: command tree, global flags
 ```
 
 ### Dependency choices (reuse over hand-rolling)
@@ -64,20 +64,20 @@ subset) · tabled · html-escape · regex · dirs · moka (or a file TTL cache).
 
 ### Design decisions
 
-- No official Rust plane-sdk exists → `planebotcli-client` implements the v1
+- No official Rust plane-sdk exists → `pbotcli-client` implements the v1
   API directly; the Python "escape hatches" become the normal path.
 - Native async end to end (the Python line was a sync SDK behind `to_thread`).
-- Naming: binary and every package are `planebotcli`, installed alongside the short `pbot`
+- Naming: binary and every package are `pbotcli`, installed alongside the short `pbot`
   alias.
 
 ## Distribution
 
-- **crates.io** → `cargo install planebotcli` (git install as fallback).
+- **crates.io** → `cargo install pbotcli-cli` (git install as fallback).
 - **cargo-dist** produces GitHub Releases (per-platform static binaries +
   sha256), an npm package (per-platform optionalDependencies, pnpm-compatible),
   and shell/PowerShell installers.
 - **Python**: a thin wheel that bundles the platform binary behind a console
-  script → `pip install planebotcli`.
+  script → `pip install pbotcli`.
 - Any-channel download; a stable binary URL + version manifest also keeps the
   door open for a future kimi-code `/plugin install` integration.
 
@@ -102,5 +102,5 @@ subset) · tabled · html-escape · regex · dirs · moka (or a file TTL cache).
   cache, config).
 - Live verification of wi flow, comments, attachments, intake, doc.
 - All four install paths produce the same working binary.
-- Once ready, planebotcli `main` switches to the Rust line; the Python line
+- Once ready, pbotcli `main` switches to the Rust line; the Python line
   freezes to bug fixes (kept on tags/branches).

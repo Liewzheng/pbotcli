@@ -6,7 +6,7 @@
 
 `pbot` — command-line client for [Plane.so](https://plane.so) (SaaS or self-hosted): work items, projects, cycles, modules, labels, states, documents, intake queues, and comments.
 
-`pbot` is an alias of `planebotcli`; both names run the same binary.
+`pbot` is an alias of `pbotcli`; both names run the same binary.
 
 ## SYNOPSIS
 

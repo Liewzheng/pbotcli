@@ -1,4 +1,4 @@
-# Plane v1 API — planebotcli interface reference
+# Plane v1 API — pbotcli interface reference
 
 Detailed documentation of every Plane v1 API endpoint the CLI talks to.
 The interface contract the CLI implements (see

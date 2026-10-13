@@ -1,13 +1,13 @@
 ---
 name: pbot
-description: "Manage Plane.so through the pbot / planebotcli CLI — work items, projects, cycles/sprints, modules, labels, states, documents, intake queue, comments, relations. Use when the user mentions Plane, pbot, planebotcli, planecli, or a work-item identifier like ABC-123, or asks about tasks, sprints, or backlogs in a project where Plane is the tracker."
-allowed-tools: Bash(pbot *, planebotcli *)
+description: "Manage Plane.so through the pbot / pbotcli CLI — work items, projects, cycles/sprints, modules, labels, states, documents, intake queue, comments, relations. Use when the user mentions Plane, pbot, pbotcli, planecli, or a work-item identifier like ABC-123, or asks about tasks, sprints, or backlogs in a project where Plane is the tracker."
+allowed-tools: Bash(pbot *, pbotcli *)
 metadata:
-  author: planebotcli maintainers
+  author: pbotcli maintainers
   version: "1.5.0"
 ---
 
-# pbot — PlanebotCLI
+# pbot — pbotcli
 
 > **Skill version: 1.5.0 — must match `pbot --version`.** A stale skill is
 > worse than no skill: every command and flag listed below may have been
@@ -15,18 +15,18 @@ metadata:
 > `pbot …` question, verify the version with `pbot --version`. If it differs
 > from `1.5.0`, this document is stale:
 >
-> - End users: run `cargo install planebotcli --locked` (or use the
+> - End users: run `cargo install pbotcli-cli --locked` (or use the
 >   prebuilt installer from the Releases page) to upgrade, then re-ask.
 > - Repo contributors / agents working against a checkout: run
->   `cargo install --path crates/planebotcli-cli --locked` from the repo root.
+>   `cargo install --path crates/pbotcli-cli --locked` from the repo root.
 >
 > The repo's CI lint (`.github/workflows/version-lint.yml`) fails any PR
 > that lets this document drift from `Cargo.toml`'s
 > `workspace.package.version`, so a synced copy should always exist on
 > `main`.
 
-**The command is `pbot`** (short alias of the full binary `planebotcli`) — a single
-static binary installed at `~/.cargo/bin` (both `pbot` and `planebotcli` are
+**The command is `pbot`** (short alias of the full binary `pbotcli`) — a single
+static binary installed at `~/.cargo/bin` (both `pbot` and `pbotcli` are
 installed). Every command group (whoami, configure, project, wi, comment,
 relations, attachment, doc, intake, label, state, module, cycle, user, cache),
 fuzzy resolution, `--json` dual output, caching, markdown input and inline images.
@@ -34,7 +34,7 @@ fuzzy resolution, `--json` dual output, caching, markdown input and inline image
 Install / update the local binary from the release line after each release:
 
 ```bash
-cargo install --path <repo>/crates/planebotcli-cli --locked   # repo = main checkout
+cargo install --path <repo>/crates/pbotcli-cli --locked   # repo = main checkout
 ```
 
 ## Key Concepts
@@ -47,11 +47,11 @@ cargo install --path <repo>/crates/planebotcli-cli --locked   # repo = main chec
 
 ## Setup & Authentication
 
-Installed from our release repo `github.com/Liewzheng/planebotcli`, whose single long-lived
+Installed from our release repo `github.com/Liewzheng/pbotcli`, whose single long-lived
 branch is `main` — completed tasks land there through PRs and releases are tagged there. After
 each new release, reinstall by default — do not ask first:
-`cargo install --path crates/planebotcli-cli --locked` (run in the main checkout;
-installs both `planebotcli` and `pbot` into `~/.cargo/bin`)
+`cargo install --path crates/pbotcli-cli --locked` (run in the main checkout;
+installs both `pbotcli` and `pbot` into `~/.cargo/bin`)
 
 Config precedence: CLI flags > env vars (`PLANE_BASE_URL`, `PLANE_API_KEY`, `PLANE_WORKSPACE`) > config file, discovered highest-priority-first from `~/.config/pbot/config.toml` (TOML), `~/.pbot`, `~/.planecli`, then `~/.plane_api` (key=value lines, chmod 600). `pbot configure` writes the active config file (the highest-priority existing one; `~/.plane_api` by default).
 
@@ -258,8 +258,8 @@ Full example:
 
 ```
 已完成：
-PR https://github.com/Liewzheng/planebotcli/pull/N
-（分支 `docs/planecli-47-repo-cleanup`，统一 planebotcli 命名 + skill 与 CLI 行为对齐，已合入 main）
+PR https://github.com/Liewzheng/pbotcli/pull/N
+（分支 `docs/planecli-47-repo-cleanup`，统一 pbotcli 命名 + skill 与 CLI 行为对齐，已合入 main）
 ```
 
 **Separate items with a blank line.** The comment body is plain text: a blank line starts a new
@@ -270,7 +270,7 @@ cap (~130 KB) — must be written to a file and posted via
 `pbot comment create ABC-123 --body-file notes.txt --json` (or `--body-md-file` /
 `--body-md -` for pipelines); `--body` itself cannot carry them.
 
-**No upstream submission.** pbot / planebotcli are an independent distribution: fixes land on
+**No upstream submission.** pbot / pbotcli are an independent distribution: fixes land on
 `main` and are never opened as issues or pull requests against Plane upstream
 or any other repository. There is no upstream-survey step and no `已提交上游：` comment to write —
 a task that records a finished fix names the local branch and the merge that carried it.

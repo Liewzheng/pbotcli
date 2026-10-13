@@ -69,7 +69,7 @@ jobs:
           echo
           echo "AGENTS.md rule 8 requires every CLI change to bump the skill"
           echo "frontmatter version in the same PR. See:"
-          echo "    https://github.com/Liewzheng/planebotcli/blob/main/AGENTS.md#task-workflow"
+          echo "    https://github.com/Liewzheng/pbotcli/blob/main/AGENTS.md#task-workflow"
           exit 1
       - name: OK
         if: steps.pkg.outputs.version == steps.skill.outputs.version
