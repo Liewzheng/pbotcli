@@ -28,6 +28,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   counts them in its summary. Angle-wrapped local paths (`![a](<./a b.png>)`)
   and `%XX` escapes (`file:///tmp/a%20b.png`) are now uploaded instead of being
   reported as a missing file.
+- `pbot whoami` renders a service-principal credential instead of a block of
+  blanks. `User` kept only the person fields, so an SP — which the server
+  describes with `name` and `type: "service_principal"` — came back as an id
+  plus four empty rows. The table now shows the resolved `name` and the `type`
+  when the server sends one, and omits the `display_name` / `first_name` /
+  `last_name` / `email` rows when all four are empty; `--json` gains `name` and
+  `type` and changes no existing key. Scripts that parse the table should read
+  `--json` instead, which is the stable interface.
 - The skill's "Images in comments" section told agents to embed extra images
   with a raw `<img src='<uuid>'/>` tag, which `--body-md` escapes into literal
   text and would print on the page as words. It now says to repeat the
