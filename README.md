@@ -38,7 +38,7 @@ Homebrew prefix.
 ### macOS
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Liewzheng/pbotcli/releases/latest/download/pbotcli-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Liewzheng/pbotcli/releases/latest/download/pbotcli-cli-installer.sh | sh
 ```
 
 Or download a `.dmg` from the latest release page (Apple Silicon: `pbotcli-aarch64-apple-darwin.dmg`;
@@ -50,7 +50,7 @@ macOS this directory may require `sudo` to write to).
 ### Linux
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Liewzheng/pbotcli/releases/latest/download/pbotcli-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Liewzheng/pbotcli/releases/latest/download/pbotcli-cli-installer.sh | sh
 ```
 
 Or download a `.deb` from the latest release page and install it with your
@@ -72,12 +72,12 @@ not a symlink.
 ### Windows
 
 ```powershell
-irm https://github.com/Liewzheng/pbotcli/releases/latest/download/pbotcli-installer.ps1 | iex
+irm https://github.com/Liewzheng/pbotcli/releases/latest/download/pbotcli-cli-installer.ps1 | iex
 ```
 
-Or download `pbotcli-x86_64-pc-windows-msvc.msi` from the latest release page and
+Or download `pbotcli-cli-<version>-x86_64.msi` from the latest release page and
 double-click to install through the standard Windows installer UI. As an
-alternative, download `pbotcli-x86_64-pc-windows-msvc.zip` and unzip it
+alternative, download `pbotcli-cli-x86_64-pc-windows-msvc.zip` and unzip it
 somewhere on your `%PATH%`. ARM64 Windows is not currently a release target —
 use the shell installer if you're on such a device.
 

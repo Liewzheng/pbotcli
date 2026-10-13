@@ -269,7 +269,7 @@ jobs:
               pbotcli ${VERSION}
 
           Or use the shell installer instead:
-              curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Liewzheng/pbotcli/releases/latest/download/pbotcli-installer.sh | sh
+              curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Liewzheng/pbotcli/releases/latest/download/pbotcli-cli-installer.sh | sh
 
           Documentation: https://github.com/Liewzheng/pbotcli
           EOF

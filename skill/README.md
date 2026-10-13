@@ -51,7 +51,7 @@ cp -r /tmp/pbotcli/skill ~/.kimi-code/skills/pbot
 git submodule add https://github.com/Liewzheng/pbotcli.git skills/pbotcli
 
 # 开发调试时用软链代替复制，改完即生效
-ln -s ~/Workspace/github.com/pbotcli/skill ~/.kimi-code/skills/pbot
+ln -s ~/Workspace/github.com/pbot-cli/skill ~/.kimi-code/skills/pbot
 ```
 
 其他 Agent（Claude Code、Cursor 等）同理，把 `skill` 目录放到各自的 skills 路径
