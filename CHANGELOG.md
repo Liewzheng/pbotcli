@@ -15,18 +15,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   remote `pbotcli`); and the cargo-dist user-agent, `homepage`, and
   `description` metadata now lives on the `pbotcli-cli` package so cargo-dist's
   Homebrew publish job finds the values it needs.
-- The Linux installer / `.msi` build references were aligned with the new
-  binary names: `cargo wix --package pbotcli-cli --output msi`, the WiX
-  template lives at `crates/pbotcli-cli/wix/main.wxs`, the MSI artefact on
-  the release page is `pbotcli-cli-x86_64-pc-windows-msvc.msi`, the Swatinem
-  rust-cache path is `pbotcli-cli -> target`, and the README's shell
-  installer example points at `pbotcli-cli-installer.{sh,ps1}` and
-  `apt install ./pbotcli-cli_<version>_<arch>.deb`. The post-merge
-  `git push <remote> :refs/tags/v1.4.2 v1.4.2` instruction now names the
-  `pbotcli` remote.
+- Installer artefacts on the release page were renamed to match the new
+  package name: the shell installers are `pbotcli-cli-installer.sh` /
+  `.ps1`, the drag-and-drop `.dmg` keeps its per-target shape
+  (`pbotcli-<target>.dmg`), the Debian packages are
+  `pbotcli-cli_<version>_<arch>.deb`, and the Windows MSI is
+  `pbotcli-cli-<version>-x86_64.msi` (matches cargo-wix 0.3.9's
+  `target/wix/<package>-<version>-<arch>.msi` output). README's download
+  links were updated to point at the renamed artefacts, and the post-merge
+  `git push <remote> :refs/tags/v1.4.2 v1.4.2` housekeeping instruction now
+  names the `pbotcli` remote.
 
 ### Added
-- `pbot skill show` / `pbot skill path` / `pbot skill version` print the AI skill (`skill/SKILL.md`) that ships with this build — vendored at compile time via `include_str!`, no network round-trip, no side-channel install. `pbot skill show --json` emits a one-line `{ path, version, skill_md }` object so installers / CI can parse it. Pair with the existing version-lint workflow (PR #26) — skill and CLI versions can no longer be out of sync in any direction.
+- `pbot skill show` / `pbot skill path` / `pbot skill version` print the AI skill (`skill/SKILL.md`) that ships with this build — vendored at compile time via `include_str!`, no network round-trip, no side-channel install. `pbot skill show --json` emits a one-line `{ path, version, skill_md }` object so installers / CI can parse it. Pair with the existing version-lint workflow — skill and CLI versions can no longer be out of sync in any direction.
 - `pbot comment create` and `pbot comment update` accept `--body-file <PATH>` and `--body-md-file <PATH>` for bodies that don't fit on the command line (a single argument is hard-capped near 130 KB on Linux by `MAX_ARG_STRLEN`); pass `-` to read the body from stdin. The four body flags are mutually exclusive — passing any two is a parse-time error and never hits the API. The new flags reuse the existing `pbotcli_html::body_to_html` / `md_to_html` path, so `--body-file` is byte-identical to `--body "$(cat PATH)"` (verified in `mock_e2e.rs` against a sample containing backticks, `<`, `&` and Chinese, and against an `![alt](<uuid>)` image for the markdown form).
 - New `build-linux-deb` job in `release.yml` (runs alongside the existing
   `build-windows-msi` / `build-mac-dmg` jobs) builds Debian packages for both
@@ -78,10 +79,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `[package.metadata.wix]` GUIDs in pbotcli-cli's Cargo.toml. Instead
   of waiting on a cargo-dist fix, the release workflow now has a dedicated
   `build-windows-msi` job (windows-latest) that installs `cargo-wix`
-  and runs `cargo wix --package pbotcli-cli --output msi` directly.
+  and runs `cargo wix --package pbotcli-cli --nocapture` directly
+  (cargo-wix 0.3.9 writes to `target/wix/`, where the verify step
+  expects the file; `--output msi` was previously tried and removed
+  because it wrote to `msi/` and silently produced no upload).
   The MSI artefact lands on the GitHub release alongside the other
   cargo-dist installers; README's Windows section is restored to link
-  to `pbotcli-cli-x86_64-pc-windows-msvc.msi`.
+  to `pbotcli-cli-<version>-x86_64.msi`.
 - The v1.4.2 release's first `Release` workflow run errored on
   windows-latest with `ParserError: Missing '(' after 'if'` —
   the default shell on `windows-latest` is PowerShell, which doesn't
@@ -180,7 +184,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `create-dmg` over the per-arch tarballs that `cargo-dist` already ships.
   The `.dmg` includes `planebotcli`, `pbot`, and a short `INSTALL.txt` so
   non-technical users can drag the binaries onto `/usr/local/bin` from Finder.
-- The release workflow now produces a `planebotcli-x86_64-pc-windows-msvc.msi`
+- The release workflow now produces a `planebotcli-cli-<version>-x86_64.msi`
   double-click installer (cargo-dist's native `msi` builder). Windows users
   who prefer the GUI path no longer have to extract a `.zip`.
 - `README.md` documents three install paths per platform (shell one-liner,
@@ -209,8 +213,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   comment through to Plane's HTML renderer: `<img>` and `<image-component>`
   strings (and any other stray angle-bracket markup) are now HTML-escaped so
   they display as literal text. The conversion is aligned with the `--body-md`
-  path — code spans first, then bare URLs, then a full-text escape — so a literal
-  `&` inside a URL query string is preserved. Also closes an HTML
+  path — code spans first, then bare URLs, then a full-text escape — so a
+  literal `&` inside a URL query string is preserved. Also closes an HTML
   injection vector for a malicious URL pasted into a plain-text body: the URL
   regex excludes both quote characters, so a URL cannot break out of the
   generated `href` attribute.
@@ -442,7 +446,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Disk caching of API responses with cashews for faster repeated requests
 - Async execution of all API calls using `asyncio.to_thread` and parallel execution
 - Comma-separated state and label filtering in the `wi list` command
-- Color styling for labels, states, priorities, and work-item tables
+- Color styling for labels, states, priorities, and work item tables
 - Commands for managing cycles, labels, and states
 - Comment update and delete operations
 - `--project` became optional in `wi list`, listing all projects when omitted
