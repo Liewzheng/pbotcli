@@ -461,6 +461,97 @@ fn relations_rm_reports_the_missing_endpoint() {
     assert!(err.contains("no relations delete endpoint"), "{err}");
 }
 
+#[test]
+fn doc_show_without_project_hints_at_minus_p_on_workspace_404() {
+    let mut server = Server::new();
+    let workspace_page_get = server
+        .mock(
+            "GET",
+            "/api/v1/workspaces/ws/pages/7880a16b-2067-47e1-8bba-c75246545b6d/",
+        )
+        .with_status(404)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"detail":"Not found"}"#)
+        .expect_at_least(1)
+        .create();
+    let any_other = server
+        .mock("GET", mockito::Matcher::Any)
+        .with_status(500)
+        .expect(0)
+        .create();
+
+    let out = run(
+        &[
+            "doc",
+            "show",
+            "7880a16b-2067-47e1-8bba-c75246545b6d",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert_eq!(out.status.code(), Some(3));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("Resource not found (HTTP 404)"),
+        "expected the underlying 404 message to be preserved: {err}"
+    );
+    assert!(
+        err.contains("Hint:"),
+        "expected a hint line on stderr: {err}"
+    );
+    assert!(
+        err.contains("-p <project>"),
+        "expected the hint to name the -p flag: {err}"
+    );
+    workspace_page_get.assert();
+    any_other.assert();
+}
+
+#[test]
+fn doc_show_with_project_unaffected_by_workspace_hint_change() {
+    let mut server = Server::new();
+    mock_project_reads(&mut server, ITEMS);
+    let page_uuid = "5963a34f-1038-43b2-90aa-cc2b183a30e2";
+    let project_page = server
+        .mock(
+            "GET",
+            format!("/api/v1/workspaces/ws/projects/p1/pages/{page_uuid}/").as_str(),
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"id":"5963a34f-1038-43b2-90aa-cc2b183a30e2","name":"Spec","description_html":"<p>body</p>","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-02T00:00:00Z"}"#)
+        .create();
+    let any_other = server
+        .mock("GET", mockito::Matcher::Any)
+        .with_status(500)
+        .expect(0)
+        .create();
+
+    let out = run(
+        &[
+            "doc",
+            "show",
+            page_uuid,
+            "-p",
+            "Demo",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout_of(&out)).expect("valid JSON");
+    assert_eq!(parsed["id"], page_uuid);
+    assert_eq!(parsed["name"], "Spec");
+    project_page.assert();
+    any_other.assert();
+}
+
 /// A service principal answers with `name` and `type`, and no person fields.
 const ME_SERVICE_PRINCIPAL: &str =
     r#"{"id":"sp1","name":"kimicode-bot","type":"service_principal"}"#;

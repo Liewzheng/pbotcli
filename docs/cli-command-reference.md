@@ -727,6 +727,14 @@ Show document details.
 pbot doc show <doc> [-p <project>] [--json]
 ```
 
+`-p <project>` is required in practice: the v1 API serves project pages only,
+so omitting it hits a workspace-level route the server does not provide. The
+command then fails with the original 404 message plus a hint that names `-p` —
+for example, `Error: Resource not found (HTTP 404).` followed by
+``Hint: This server has no workspace-level pages route; pass `-p <project>` to look up a project page.``
+(exit code 3). With `-p` the lookup, success output, and exit code are
+unchanged.
+
 ### pbot doc create
 
 Create a document.

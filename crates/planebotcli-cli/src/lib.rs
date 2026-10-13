@@ -725,7 +725,9 @@ pub enum DocCmd {
     Show {
         /// Page name or UUID.
         doc: String,
-        /// Project name, identifier, or UUID. If omitted, looks up a workspace page.
+        /// Project name, identifier, or UUID. Required in practice — the v1
+        /// API serves project pages only; without `-p` the call fails with a
+        /// hint naming this flag (the workspace-level route does not exist).
         #[arg(long, short = 'p')]
         project: Option<String>,
     },
@@ -3574,6 +3576,7 @@ fn resolve_parent_id(
     }
     Err(PlaneError::NotFound {
         message: format!("Parent work item not found in the listed items: {query}"),
+        hint: None,
     })
 }
 
@@ -3739,6 +3742,7 @@ async fn resolve_label(
         Some(label) => Ok(label.clone()),
         None => Err(PlaneError::NotFound {
             message: format!("Label not found: {query}"),
+            hint: None,
         }),
     }
 }
@@ -3760,6 +3764,7 @@ async fn resolve_state(
         Some(state) => Ok(state.clone()),
         None => Err(PlaneError::NotFound {
             message: format!("State not found: {query}"),
+            hint: None,
         }),
     }
 }
@@ -4069,6 +4074,7 @@ async fn resolve_page(
         Some(m) => Ok(m.item.clone()),
         None => Err(PlaneError::NotFound {
             message: format!("Page not found: {query}"),
+            hint: None,
         }),
     }
 }
@@ -4163,9 +4169,20 @@ async fn cmd_doc_show(
     json: bool,
 ) -> Result<(), PlaneError> {
     let scope = page_scope(client, project).await?;
-    let page = resolve_page(client, &scope, doc).await?;
-    output_page_view(&page, json);
-    Ok(())
+    match resolve_page(client, &scope, doc).await {
+        Ok(page) => {
+            output_page_view(&page, json);
+            Ok(())
+        }
+        Err(err @ PlaneError::NotFound { .. }) if matches!(scope, PageScope::Workspace) => {
+            let message = err.to_string();
+            Err(PlaneError::not_found_with_hint(
+                message,
+                "This server has no workspace-level pages route; pass `-p <project>` to look up a project page.",
+            ))
+        }
+        Err(err) => Err(err),
+    }
 }
 
 /// Image MIME types the page-asset endpoint accepts (`entity_type:
@@ -5095,6 +5112,7 @@ async fn resolve_module(
             .map_err(|e| match e {
                 PlaneError::NotFound { .. } => PlaneError::NotFound {
                     message: format!("Module not found: {query}"),
+                    hint: None,
                 },
                 other => other,
             });
@@ -5106,6 +5124,7 @@ async fn resolve_module(
         Some(m) => Ok(m.item.clone()),
         None => Err(PlaneError::NotFound {
             message: format!("Module not found: {query}"),
+            hint: None,
         }),
     }
 }
@@ -5123,6 +5142,7 @@ async fn resolve_cycle(
             .map_err(|e| match e {
                 PlaneError::NotFound { .. } => PlaneError::NotFound {
                     message: format!("Cycle not found: {query}"),
+                    hint: None,
                 },
                 other => other,
             });
@@ -5134,6 +5154,7 @@ async fn resolve_cycle(
         Some(c) => Ok(c.item.clone()),
         None => Err(PlaneError::NotFound {
             message: format!("Cycle not found: {query}"),
+            hint: None,
         }),
     }
 }
