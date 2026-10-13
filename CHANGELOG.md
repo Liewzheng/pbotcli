@@ -20,6 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `apt install ./planebotcli-cli_<version>_amd64.deb` snippet.
 
 ### Fixed
+- `doc create` / `doc update --content-md` no longer skip an image reference in
+  silence. A `src` that the scanner cannot accept — a path with spaces that is
+  not wrapped in `<…>`, a `"title"` suffix, an empty `src` — used to leave the
+  literal `![…](…)` text on the page while the command exited 0; each one now
+  prints a `warning:` line, and `--dry-run` lists them under `unprocessed` and
+  counts them in its summary. Angle-wrapped local paths (`![a](<./a b.png>)`)
+  and `%XX` escapes (`file:///tmp/a%20b.png`) are now uploaded instead of being
+  reported as a missing file.
 - `pbot whoami` renders a service-principal credential instead of a block of
   blanks. `User` kept only the person fields, so an SP — which the server
   describes with `name` and `type: "service_principal"` — came back as an id

@@ -176,6 +176,10 @@ pbot state create "In Review" -p "Project" --group started --color "#FFA500" --j
 pbot doc ls -p "Project" --json
 pbot doc create --title "Spec" --content "Plain text, `code`, https://links" -p "Project" --json
 # --content is Markdown by default (headings/lists/code/links/images → HTML);
+# a local image path is uploaded and its src replaced by the asset id — wrap a
+# path that contains spaces in angle brackets, `![alt](<./a b.png>)`; a
+# reference pbot cannot handle is warned about on stderr and stays literal text
+# (--dry-run lists it under `unprocessed`).
 # pass --content-md to spell out the same path, or --content-raw if the body
 # must stay literal plain text (paragraphs from blank lines, single newlines
 # become <br/>, `# heading` stays text). --content-html stores HTML verbatim
