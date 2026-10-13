@@ -737,6 +737,14 @@ Show document details.
 pbot doc show <doc> [-p <project>] [--json]
 ```
 
+`-p <project>` is required in practice: the v1 API serves project pages only,
+so omitting it hits a workspace-level route the server does not provide. The
+command then fails with the original 404 message plus a hint that names `-p` —
+for example, `Error: Resource not found (HTTP 404).` followed by
+``Hint: This server has no workspace-level pages route; pass `-p <project>` to look up a project page.``
+(exit code 3). With `-p` the lookup, success output, and exit code are
+unchanged.
+
 ### pbot doc create
 
 Create a document.
@@ -759,7 +767,7 @@ pbot doc create --title <title>
 | `--content-raw <text>` | Content as plain text: blank lines separate paragraphs, single newlines become `<br/>`. Markdown syntax (`#`, `-`, `*`, `[ ]`) is treated literally. This is what `--content` did before v1.4.0. |
 | `--content-html <html>` | Content as raw HTML, stored verbatim (rich layout). |
 | `-p, --project <name\|id>` | Project; omit to create a workspace page. |
-| `--dry-run` | Report the target and every image verdict without writing anything; exits non-zero when an image is missing or its MIME is not allowed. |
+| `--dry-run` | Report the target and every image verdict without writing anything; exits non-zero when an image is missing or its MIME is not allowed. References the grammar rejects are listed under `unprocessed` and counted in the summary — they do not change the exit code. |
 
 The four content inputs are mutually exclusive.
 
@@ -768,6 +776,26 @@ The four content inputs are mutually exclusive.
 with the asset id; a remote URL or an existing asset id is kept as-is. Images inside
 fenced code blocks are left alone. A missing file, an unreadable file, or a MIME
 outside `image/jpeg|png|webp|gif` fails the command (SVG is rejected by the server).
+
+A `src` is one token with no spaces — the shape the Markdown converter turns into
+`<img>` — so a local path that contains spaces has to be wrapped in angle
+brackets, `![alt](<./a b.png>)`, and `%XX` escapes are decoded
+(`file:///tmp/a%20b.png` finds `a b.png`). Anything else that looks like an image
+but cannot be handled — a space without brackets, a `"title"` suffix, an empty
+`src`, or an angle-wrapped non-local `src` — is not an error: the reference stays
+literal Markdown on the page and `pbot` says so on stderr. `--dry-run` lists
+those under `unprocessed` and counts them in its summary, so a report cannot read
+as clean while the page is about to keep raw `![…](…)` text.
+
+Both the warning and the report are **human-readable, not a machine contract**:
+the warning is `warning: line N: <reference> was not uploaded — <reason>; it will
+stay literal markdown on the page`, and the summary is
+`summary: N to upload, N kept, N error(s), N unprocessed`. `--json` returns the
+page object and does not carry either — scripts that must detect an unhandled
+reference should parse the `--dry-run` summary or check the stored body.
+
+`doc update --dry-run` uses the same target page and the same image grammar and
+report as `doc create`.
 
 **Examples**
 

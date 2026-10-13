@@ -736,6 +736,8 @@ pbot doc list -p <project> [--json]
 pbot doc show <doc> [-p <project>] [--json]
 ```
 
+`-p <project>` 实际上必填：v1 API 只提供项目级页面路由，省略 `-p` 会命中一个服务端并不存在的工作区级路由。此时命令会用原 404 文案加一条提示告诉下一步该传 `-p`，例如 `Error: Resource not found (HTTP 404).` 之后接 ``Hint: This server has no workspace-level pages route; pass `-p <project>` to look up a project page.``（退出码 3）。带 `-p` 时查找、成功输出和退出码与之前一致。
+
 ### pbot doc create
 
 新建文档。
@@ -758,12 +760,25 @@ pbot doc create --title <title>
 | `--content-raw <text>` | 内容（纯文本：空行分段，单换行变 `<br/>`；`#`、`-`、`*`、`[ ]` 等 markdown 字符当字面）。即 v1.3.x 的 `--content` 行为。 |
 | `--content-html <html>` | 内容（原样 HTML，存原文，适合富排版）。 |
 | `-p, --project <name\|id>` | 项目；省略则创建到工作区级页面。 |
-| `--dry-run` | 只报告目标与每张图片的判定，不做任何写入；图片缺失或 MIME 不允许时非零退出。 |
+| `--dry-run` | 只报告目标与每张图片的判定，不做任何写入；图片缺失或 MIME 不允许时非零退出。解析不了的引用会列在 `unprocessed` 下并计入汇总行，但不改变退出码。 |
 
 四种内容输入互斥。
 
 **`--content` / `--content-md` 里的图片无需额外参数**：本地路径（`./a.png` 或 `file://…`）会上传为页面资产并把 src 替换为 asset id；远端 URL 或已是 asset id 的原样保留；围栏代码块里的图片不处理。文件缺失/不可读、或 MIME 不在
 `image/jpeg|png|webp|gif` 内则命令失败（SVG 服务端拒绝）。
+
+`src` 必须是**不含空格的单个 token**（这正是 markdown 转换器会变成 `<img>` 的形状），
+所以含空格的本地路径要用尖括号包住：`![alt](<./a b.png>)`；`%XX` 转义会被解码
+（`file:///tmp/a%20b.png` 能找到 `a b.png`）。其余「看起来像图片但处理不了」的写法 ——
+没加尖括号的空格、`"title"` 后缀、空 `src`、尖括号里不是本地路径 —— **不算错误**：
+该引用会以字面 markdown 留在页面上，同时 pbot 在 stderr 给出告警。`--dry-run` 会把它们
+列在 `unprocessed` 下并计入汇总行，避免报告读起来像「一切正常」。
+
+告警与报告是**给人读的，不是机器契约**：告警形如
+`warning: line N: … was not uploaded — <原因>; it will stay literal markdown on the page`，
+汇总行为 `summary: N to upload, N kept, N error(s), N unprocessed`。`--json` 返回的是页面对象，
+两者都不包含 —— 脚本要判断「有引用未被处理」，请解析 `--dry-run` 的汇总行。
+`doc update --dry-run` 使用同一套图片文法与报告。
 
 **示例**
 
@@ -794,7 +809,7 @@ pbot doc update <doc> [--title <title>]
 | `--content-raw <text>` | 新内容（纯文本，v1.3.x 的 `--content` 行为）。 |
 | `--content-html <html>` | 新内容（原样 HTML）。 |
 | `-p, --project <name\|id>` | 项目；省略则操作工作区级页面。 |
-| `--dry-run` | 只报告目标与每张图片判定，不做任何写入；图片不可处理时退出码 5。 |
+| `--dry-run` | 只报告目标与每张图片判定，不做任何写入；图片不可处理时退出码 5。解析不了的引用会列在 `unprocessed` 下并计入汇总行，但不改变退出码。 |
 
 ### pbot doc archive
 
