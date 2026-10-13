@@ -74,7 +74,7 @@ impl PlaneClient {
 
     pub fn with_cache(cfg: &Config, no_cache: bool) -> Result<Self, PlaneError> {
         let http = reqwest::Client::builder()
-            .user_agent("pbotcli/0.1.0")
+            .user_agent(format!("pbotcli/{}", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|e| PlaneError::Api {
                 message: format!("failed to build HTTP client: {e}"),

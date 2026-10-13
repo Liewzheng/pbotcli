@@ -8,6 +8,7 @@ edition = "2024"
 license = "MIT"
 repository = "https://github.com/Liewzheng/pbotcli"
 homepage = "https://github.com/Liewzheng/pbotcli"
+description = "Rust CLI for Plane.so — provides the pbotcli and pbot binaries."
 
 [workspace.dependencies]
 anyhow = "1"
