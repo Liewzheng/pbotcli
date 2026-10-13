@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `last_name` / `email` rows when all four are empty; `--json` gains `name` and
   `type` and changes no existing key. Scripts that parse the table should read
   `--json` instead, which is the stable interface.
+- The skill's "Images in comments" section told agents to embed extra images
+  with a raw `<img src='<uuid>'/>` tag, which `--body-md` escapes into literal
+  text and would print on the page as words. It now says to repeat the
+  markdown image syntax `![alt](<uuid>)`, once per image.
 - Windows `.msi` installer restored. The v1.4.x release intentionally
   dropped `msi` because cargo-dist 0.32's plan step could not detect
   `[package.metadata.wix]` GUIDs in planebotcli-cli's Cargo.toml. Instead
