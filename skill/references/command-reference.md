@@ -423,8 +423,10 @@ principal prints `<name> (service principal)` (or `<name> (SP owned by <owner>)`
 
 Under a service-principal token `me` means that principal's **shadow bot workspace member**
 (`svc-<name> (bot)`, the user Plane credits its writes to) — not the principal id `whoami`
-prints, which is not a member and would silently assign nobody. If no such member exists,
-`me` fails with a hint naming `pbot user ls` instead of returning an empty result.
+prints, which is not a member and would silently assign nobody. A service-principal `me` result
+names what it resolved to, member UUID included; if no such member exists, `me` fails with a hint
+naming `pbot user ls` instead of returning an empty result. A human credential's output is
+unchanged.
 
 ## Cache
 

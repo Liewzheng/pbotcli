@@ -62,7 +62,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   a member: `wi create`/`wi update`/`wi assign` assignments to `me` used to be
   silently ignored, and `wi ls --assignee me` used to return an empty list. When
   no such member exists the command fails with a hint naming `pbot user ls`
-  instead of resolving to nothing.
+  instead of resolving to nothing, and a service-principal `me` result reports
+  what it resolved to — member name and UUID — with the next command to run when
+  the filter finds nothing. A human credential's `me` output is unchanged.
 - `docs/rust-rewrite.md` no longer lists crates.io as a live install channel: the
   crate is not published, and the released CLI comes from the Homebrew tap.
 

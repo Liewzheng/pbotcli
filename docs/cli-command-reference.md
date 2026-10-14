@@ -87,9 +87,14 @@ pbot whoami [--json]
 `--json` prints the raw `/api/v1/users/me/` payload. The table's `name` row says which kind of
 credential is in use: a **human** account prints its plain name, a **service principal** prints
 `<name> (service principal)` — a token issued for a bot, with no person fields to show — or
-`<name> (SP owned by <owner>)` when the payload names the owning human. The API does not send the
-owner today (it deliberately never serializes the owner's profile), so the plain marker is what a
-service principal normally sees.
+`<name> (SP owned by <owner>)` when the payload names the owning human.
+
+**Why the owner is usually absent.** `/api/v1/users/me/` deliberately never serializes the owner's
+profile: a service principal is not allowed to read the human who owns it, and that is a server-side
+permission decision, not a client limitation. The owner is therefore read forward-compatibly — the
+marker above appears only if the payload ever carries an `owner` (object or name) or `owner_name`
+field. The session-only `/api/workspaces/<slug>/service-principals/` endpoint does return `owner`,
+but it rejects a service-principal token (403), so the CLI does not probe it.
 
 ### `me` under a service principal
 
@@ -97,8 +102,20 @@ service principal normally sees.
 principal's writes to, listed by `pbot user ls` as `svc-<name> (bot)`. This matters because a
 service principal answers `/users/me/` with its `ServicePrincipal.id`, which is **not** a member id —
 assigning it does nothing and filtering on it returns nothing. `me` never sends that id to the API.
-When no matching member exists, `me` fails with a hint naming `pbot user ls` instead of handing back
-an id that would be silently ignored.
+
+Every service-principal `me` result says what it resolved to, so an unattended caller can act
+without reading the source:
+
+- `wi assign` / `wi create --assignee me` / `wi update --assignee me` report
+  `Work item assigned to <name> (service principal) as its shadow bot member 'svc-<name> (bot)' (member id <uuid>).`
+- `wi ls --assignee me` with no matching rows prints a note naming the principal, the shadow bot
+  member and its id, and the next command to run (`pbot wi ls -p <project> --assignee '<member name or uuid>'`,
+  members listed by `pbot user ls`).
+- When no shadow bot member exists, `me` fails (exit 3) with a hint naming `pbot user ls` instead of
+  handing back an id that would be silently ignored.
+
+A human credential's `me` output is unchanged: it resolves to the account's own member id and prints
+no identity note.
 
 ## pbot configure
 

@@ -1797,7 +1797,10 @@ fn wi_assign_me_under_a_service_principal_names_the_identity() {
     );
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(
-        err.contains("Work item assigned to kimicode-bot (service principal)."),
+        err.contains(
+            "Work item assigned to kimicode-bot (service principal) as its shadow bot member \
+             'svc-kimicode-bot (bot)' (member id u-shadow)."
+        ),
         "{err}"
     );
 }
@@ -1943,9 +1946,9 @@ fn wi_show_without_project_skips_a_project_that_answers_404_for_it() {
 }
 
 #[test]
-fn wi_ls_assignee_me_notes_an_empty_result_for_a_human_credential_too() {
-    // A human `me` that matches nothing is not a resolution failure, but the
-    // empty list must not be silent either: it says which identity was listed.
+fn wi_ls_assignee_me_human_credential_output_is_unchanged() {
+    // The identity work is service-principal-only: a human `me` that matches
+    // nothing prints no note at all, exactly as before.
     let mut server = Server::new();
     mock_list(&mut server, "/api/v1/workspaces/ws/projects/", PROJECTS);
     mock_list(
@@ -1988,7 +1991,75 @@ fn wi_ls_assignee_me_notes_an_empty_result_for_a_human_credential_too() {
     assert_eq!(parsed.as_array().map(Vec::len), Some(0));
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(
-        err.contains("no work items are assigned to Jicai Liu, your human account"),
+        !err.contains("note:"),
+        "human path must stay unchanged: {err}"
+    );
+    assert!(!err.contains("service principal"), "{err}");
+}
+
+#[test]
+fn wi_ls_assignee_me_empty_result_says_what_it_resolved_to_and_what_to_run() {
+    // The service-principal case is the opposite: an unattended caller must be
+    // able to read the principal, the shadow bot member it mapped to, that
+    // member's id, and the next command — from the output alone.
+    let mut server = Server::new();
+    mock_list(&mut server, "/api/v1/workspaces/ws/projects/", PROJECTS);
+    // ITEMS is assigned to u1, not to the shadow bot member u-shadow.
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/work-items/",
+        ITEMS,
+    );
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/states/",
+        STATES,
+    );
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/labels/",
+        LABELS,
+    );
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/members/",
+        MEMBERS_WITH_SHADOW_BOT,
+    );
+    mock_me(&mut server, ME_SERVICE_PRINCIPAL);
+
+    let out = run(
+        &[
+            "wi",
+            "ls",
+            "-p",
+            "Demo",
+            "--assignee",
+            "me",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout_of(&out)).expect("valid JSON");
+    assert_eq!(parsed.as_array().map(Vec::len), Some(0));
+    let err = String::from_utf8_lossy(&out.stderr);
+    // who am I
+    assert!(err.contains("kimicode-bot (service principal)"), "{err}");
+    // why `me` maps where it does, and to which member (name + UUID)
+    assert!(
+        err.contains("ServicePrincipal id is not a workspace member row"),
         "{err}"
     );
+    assert!(
+        err.contains("'svc-kimicode-bot (bot)' (member id u-shadow)"),
+        "{err}"
+    );
+    // what to run next
+    assert!(err.contains("pbot wi ls -p <project> --assignee"), "{err}");
+    assert!(err.contains("pbot user ls"), "{err}");
 }

@@ -166,7 +166,7 @@ pub async fn resolve_user_query(
         return Ok(ResolvedUser {
             id: me.id,
             name,
-            identity: None,
+            service_principal: None,
         });
     }
     let members = client.list_members().await?;
@@ -200,12 +200,37 @@ pub struct ResolvedUser {
     pub id: String,
     /// The name to show for the resolved member.
     pub name: String,
-    /// The credential's own identity label, set only when `me` resolved through
-    /// a service principal — `Kimicode … (service principal)`, or `… (SP owned
-    /// by <owner>)` when the payload names the owner. Callers use it to say
-    /// which identity a write was credited to; it stays `None` for a human
-    /// credential, whose messages are unchanged.
-    pub identity: Option<String>,
+    /// Set only when `me` resolved through a **service principal**: what that
+    /// principal is and which shadow bot member it mapped to. `None` for a human
+    /// credential and for an explicit reference, whose messages are unchanged.
+    pub service_principal: Option<ServicePrincipalSelf>,
+}
+
+/// A service-principal credential's own identity, as `me` resolved it.
+#[derive(Debug, Clone)]
+pub struct ServicePrincipalSelf {
+    /// The principal's label — `kimicode-bot (service principal)`, or
+    /// `… (SP owned by <owner>)` when `/users/me/` names the owner.
+    pub label: String,
+    /// The shadow bot workspace member every `me` payload carries.
+    pub member_id: String,
+    /// That member's server-composed name (`svc-<principal name> (bot)`).
+    pub member_name: String,
+}
+
+impl ServicePrincipalSelf {
+    /// One sentence naming what `me` resolved to, so an unattended caller can
+    /// see the mapping — principal, shadow bot member, member id — from the
+    /// output alone, without reading the source.
+    pub fn resolved_to(&self) -> String {
+        format!(
+            "{label} — a ServicePrincipal id is not a workspace member row, so 'me' maps to its \
+             shadow bot member '{member}' (member id {id})",
+            label = self.label,
+            member = self.member_name,
+            id = self.member_id,
+        )
+    }
 }
 
 impl ResolvedUser {
@@ -213,14 +238,17 @@ impl ResolvedUser {
         Self {
             id: id.to_string(),
             name: name.to_string(),
-            identity: None,
+            service_principal: None,
         }
     }
 
-    /// What to show for this resolution: the credential's identity when `me`
-    /// went through a service principal, the member's name otherwise.
+    /// What to show for this resolution: the service principal's label when `me`
+    /// went through one, the member's name otherwise.
     pub fn display(&self) -> &str {
-        self.identity.as_deref().unwrap_or(&self.name)
+        match &self.service_principal {
+            Some(sp) => &sp.label,
+            None => &self.name,
+        }
     }
 }
 
@@ -235,13 +263,19 @@ async fn resolve_service_principal_self(
         Some(member) => Ok(ResolvedUser {
             id: member.id.clone(),
             name: member.full_name(),
-            identity: Some(me.identity_label()),
+            service_principal: Some(ServicePrincipalSelf {
+                label: me.identity_label(),
+                member_id: member.id.clone(),
+                // The server's composition rule, so the reader can find the row
+                // even when this deployment answered with an older shape.
+                member_name: format!("svc-{sp_name} (bot)"),
+            }),
         }),
         None => Err(PlaneError::not_found_with_hint(
             format!(
                 "Cannot resolve 'me': {identity} has no shadow bot workspace member \
-                 (expected a member named 'svc-{sp_name} (bot)'). The service principal's own id is \
-                 not a member id, so assigning it would silently do nothing.",
+                 (expected a member named 'svc-{sp_name} (bot)'). A ServicePrincipal id is not a \
+                 member row, so assigning it would silently do nothing.",
                 identity = me.identity_label(),
             ),
             "Run 'pbot user ls' to list the workspace members, then pass --assignee with the \

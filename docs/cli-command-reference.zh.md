@@ -84,11 +84,22 @@ pbot [全局选项] <命令> [<子命令>] [<参数>...] [选项]
 pbot whoami [--json]
 ```
 
-`--json` 输出 `/api/v1/users/me/` 的原始响应。表格的 `name` 行会标明凭证类型：**人类账户**直接显示名字；**服务主体**显示 `<名称> (service principal)`（机器人 token，没有可显示的人名字段），若响应里带 owner 名则显示 `<名称> (SP owned by <owner>)`。目前 API 不返回 owner（服务端刻意不序列化 owner 的资料），因此服务主体通常看到的是前一种。
+`--json` 输出 `/api/v1/users/me/` 的原始响应。表格的 `name` 行会标明凭证类型：**人类账户**直接显示名字；**服务主体**显示 `<名称> (service principal)`（机器人 token，没有可显示的人名字段），若响应里带 owner 名则显示 `<名称> (SP owned by <owner>)`。
+
+**为什么通常看不到 owner。** `/api/v1/users/me/` 刻意不序列化 owner 的资料：服务主体不允许读取拥有它的人类账户 —— 这是服务端的**权限设计**，不是客户端的能力缺失。因此 owner 采用前向兼容读取：只有当响应里出现 `owner`（对象或名字）或 `owner_name` 字段时才会显示上面的标记。会话专用的 `/api/workspaces/<slug>/service-principals/` 接口确实返回 `owner`，但它拒绝服务主体 token（403），所以 CLI 不会去探测它。
 
 ### 服务主体下的 `me`
 
-`me` 解析为当前凭证的**影子机器人成员**：Plane 用来记录该主体写入的 `User` 行，`pbot user ls` 中显示为 `svc-<名称> (bot)`。这点很关键：服务主体调用 `/users/me/` 得到的是 `ServicePrincipal.id`，它**不是**成员 id —— 用它指派不会生效，用它过滤只会得到空列表。`me` 不会把这个 id 发给 API；找不到对应成员时，`me` 会报错并提示执行 `pbot user ls`，而不是返回一个会被静默忽略的 id。
+`me` 解析为当前凭证的**影子机器人成员**：Plane 用来记录该主体写入的 `User` 行，`pbot user ls` 中显示为 `svc-<名称> (bot)`。这点很关键：服务主体调用 `/users/me/` 得到的是 `ServicePrincipal.id`，它**不是**成员 id —— 用它指派不会生效，用它过滤只会得到空列表。`me` 不会把这个 id 发给 API。
+
+服务主体下的每个 `me` 结果都会说明解析到了什么，方便无人值守的调用方无需读源码即可判断：
+
+- `wi assign` / `wi create --assignee me` / `wi update --assignee me` 输出
+  `Work item assigned to <名称> (service principal) as its shadow bot member 'svc-<名称> (bot)' (member id <uuid>).`
+- `wi ls --assignee me` 在没有匹配行时打印一行 note：说明主体、影子 bot 成员及其 UUID，以及下一条应执行的命令（`pbot wi ls -p <project> --assignee '<成员名或 uuid>'`，成员列表用 `pbot user ls`）。
+- 找不到影子 bot 成员时，`me` 报错（退出码 3），hint 指向 `pbot user ls`，而不是返回一个会被静默忽略的 id。
+
+人类凭证的 `me` 输出保持不变：解析到账号自身的成员 id，且不打印任何身份 note。
 
 ## pbot configure
 

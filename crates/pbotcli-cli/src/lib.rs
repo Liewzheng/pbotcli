@@ -1989,18 +1989,19 @@ async fn cmd_wi_list(
     if let Some(q) = assignee {
         let resolved = resolve_user_query(q, client).await?;
         rows.retain(|(item, _)| work_item_has_assignee(item, &resolved.id));
-        // `me` has two different meanings depending on the credential — the
-        // member the account itself is, or the service principal's shadow bot —
-        // and either can legitimately have nothing assigned. Say which identity
-        // was listed and that the empty result is about it, so an empty table
-        // is never mistaken for a resolution that silently failed.
-        if rows.is_empty() && q.eq_ignore_ascii_case("me") {
-            let who = match resolved.identity.as_deref() {
-                Some(identity) => identity.to_string(),
-                None => format!("{}, your human account", resolved.name),
-            };
+        // Under a service principal `me` means the principal's shadow bot
+        // member, which normally has nothing assigned. An empty list is then the
+        // honest answer, but the caller — usually an unattended agent — has to
+        // be able to read what `me` resolved to and what to run next without
+        // guessing. Service-principal credentials only: the human path's output
+        // is unchanged.
+        if rows.is_empty()
+            && let Some(sp) = &resolved.service_principal
+        {
+            eprintln!("note: 'me' resolved to {}", sp.resolved_to());
             eprintln!(
-                "note: no work items are assigned to {who}, which is what 'me' resolves to here."
+                "note: no work items are assigned to that member. List another member's items with \
+                 `pbot wi ls -p <project> --assignee '<member name or uuid>'`; members: `pbot user ls`"
             );
         }
     }
@@ -3865,10 +3866,18 @@ async fn cmd_wi_assign(
 ) -> Result<(), PlaneError> {
     let located = locate_issue(client, issue, project).await?;
     let resolved = resolve_user_query(assignee.unwrap_or("me"), client).await?;
-    // `display()` names the credential's identity when `me` went through a
-    // service principal (whose shadow bot user did the assignment), the
-    // member's name otherwise. Read it before the id moves into the payload.
-    let assigned_to = resolved.display().to_string();
+    // Report what the write was credited to. Under a service principal that is
+    // the principal's shadow bot member — say so, with the member name and id,
+    // so an unattended caller can audit the assignment from the output alone.
+    // A human credential and an explicit reference print exactly what they did
+    // before.
+    let assigned_to = match &resolved.service_principal {
+        Some(sp) => format!(
+            "{} as its shadow bot member '{}' (member id {})",
+            sp.label, sp.member_name, sp.member_id
+        ),
+        None => resolved.display().to_string(),
+    };
     let write = WorkItemWrite {
         assignees: Some(vec![resolved.id]),
         ..Default::default()
