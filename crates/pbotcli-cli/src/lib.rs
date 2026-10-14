@@ -1909,27 +1909,12 @@ async fn cmd_wi_list(
     let limit = opts.limit;
     let workspace = client.workspace().to_string();
 
-    // Member map (workspace-scoped) for assignee name resolution and filters.
-    // Secondary enrichment (ADR-0006): a member list this credential cannot read
-    // shows ids in place of names instead of failing the listing, and says which
-    // call was denied so the substitution is not mistaken for "nobody".
-    let member_map: HashMap<String, String> = match client.list_members().await {
-        Ok(members) => members
-            .into_iter()
-            .map(|m| {
-                let name = m.full_name();
-                (m.id, name)
-            })
-            .collect(),
-        Err(err) if pbotcli_client::is_resource_access_denied(&err) => {
-            eprintln!(
-                "warning: could not read the workspace member list ({err}); assignee names will \
-                 show their ids — check access with `pbot user ls`"
-            );
-            HashMap::new()
-        }
-        Err(err) => return Err(err),
-    };
+    // Member names are enrichment (ADR-0006) and are read lazily: only a listing
+    // with assignees to resolve — or an `--assignee` filter — needs the workspace
+    // member list, so a listing with neither costs no request and prints no
+    // warning. When it is needed and this credential cannot read it, the map
+    // degrades and says which call was denied.
+    let mut member_map: Option<HashMap<String, String>> = None;
 
     let projects: Vec<Project> = match project {
         Some(q) => vec![resolve_project(q, client).await?],
@@ -1966,6 +1951,13 @@ async fn cmd_wi_list(
         };
         let states = client.list_states(&project_id).await?;
         let labels_list = client.list_labels(&project_id).await?;
+        // Read the member list on first need: an assignee filter, or rows that
+        // actually carry assignees to resolve.
+        if member_map.is_none()
+            && (assignee.is_some() || items.iter().any(work_item_has_any_assignee))
+        {
+            member_map = Some(member_map_or_degraded(client).await?);
+        }
         let state_map: HashMap<String, String> = states
             .into_iter()
             .map(|s| (s.id, s.name.unwrap_or_default()))
@@ -1977,7 +1969,7 @@ async fn cmd_wi_list(
         let lookups = Lookups {
             state_map,
             label_map,
-            member_map: member_map.clone(),
+            member_map: member_map.clone().unwrap_or_default(),
         };
         rows.extend(items.into_iter().map(|item| {
             let view = work_item_view(&item, &identifier, &lookups, base_url, &workspace);
@@ -1987,7 +1979,12 @@ async fn cmd_wi_list(
     if !skipped.is_empty() {
         eprintln!(
             "warning: {}",
-            pbotcli_resolve::skipped_projects_note("listed", projects.len(), &skipped)
+            pbotcli_resolve::skipped_projects_note(
+                "listed",
+                project.is_some(),
+                projects.len(),
+                &skipped
+            )
         );
     }
 
@@ -2641,8 +2638,8 @@ async fn cmd_wi_create(
     // assignment was credited to.
     let mut assignee_note: Option<String> = None;
     if let Some(assignee) = opts.assignee {
-        let resolved = resolve_user_query(assignee, client).await?;
-        assignee_note = assignee_attribution_note(&resolved);
+        let resolved = resolve_assignee_for_write(client, assignee).await?;
+        assignee_note = resolved.note;
         write.assignees = Some(vec![resolved.id]);
     }
     if let Some(parent) = opts.parent {
@@ -2750,8 +2747,8 @@ async fn cmd_wi_update(
     // assignment was credited to.
     let mut assignee_note: Option<String> = None;
     if let Some(assignee) = opts.assignee {
-        let resolved = resolve_user_query(assignee, client).await?;
-        assignee_note = assignee_attribution_note(&resolved);
+        let resolved = resolve_assignee_for_write(client, assignee).await?;
+        assignee_note = resolved.note;
         write.assignees = Some(vec![resolved.id]);
     }
     if opts.labels.is_some() || opts.clear_labels {
@@ -3769,6 +3766,38 @@ fn work_item_has_assignee(item: &WorkItem, user_id: &str) -> bool {
     })
 }
 
+/// Does the row carry any assignee at all? The member map resolves exactly those
+/// ids, so a listing whose rows have none does not need the member list.
+fn work_item_has_any_assignee(item: &WorkItem) -> bool {
+    matches!(item.assignees.as_ref(), Some(Value::Array(ids)) if !ids.is_empty())
+}
+
+/// The workspace member map that resolves assignee names, or an empty map when
+/// this credential cannot read the member list — with a warning naming the denied
+/// call, so the substitution is not mistaken for "nobody". Enrichment only: a
+/// listing that needs no names never calls this (ADR-0006).
+async fn member_map_or_degraded(
+    client: &PlaneClient,
+) -> Result<HashMap<String, String>, PlaneError> {
+    match client.list_members().await {
+        Ok(members) => Ok(members
+            .into_iter()
+            .map(|m| {
+                let name = m.full_name();
+                (m.id, name)
+            })
+            .collect()),
+        Err(err) if pbotcli_client::is_resource_access_denied(&err) => {
+            eprintln!(
+                "warning: could not read the workspace member list ({err}); assignee names will \
+                 show the member id's first 8 characters — check access with `pbot user ls`"
+            );
+            Ok(HashMap::new())
+        }
+        Err(err) => Err(err),
+    }
+}
+
 /// Resolve a `--parent` reference (UUID, full identifier, or fuzzy name) to a
 /// work item UUID using the already-fetched rows.
 fn resolve_parent_id(
@@ -3920,6 +3949,27 @@ async fn cmd_wi_assign(
     // before.
     eprintln!("{note}");
     Ok(())
+}
+
+/// An `--assignee` reference resolved for a write: the member id to send, and the
+/// identity note to print once the write lands (set only when `me` went through a
+/// service principal). The one place `wi create` and `wi update` resolve an
+/// assignee, so the two cannot drift apart.
+struct WriteAssignee {
+    id: String,
+    note: Option<String>,
+}
+
+async fn resolve_assignee_for_write(
+    client: &PlaneClient,
+    assignee: &str,
+) -> Result<WriteAssignee, PlaneError> {
+    let resolved = resolve_user_query(assignee, client).await?;
+    let note = assignee_attribution_note(&resolved);
+    Ok(WriteAssignee {
+        id: resolved.id,
+        note,
+    })
 }
 
 /// The sentence a write prints when `--assignee me` was credited to a service

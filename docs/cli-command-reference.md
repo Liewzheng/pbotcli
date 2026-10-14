@@ -109,7 +109,8 @@ without reading the source:
 - Every write made with `--assignee me` — `wi assign`, `wi create`, `wi update` — prints, once the
   write has landed,
   `Work item assigned to <name> (service principal) as its shadow bot member '<member name>' (member id <uuid>).`
-  `<member name>` is the matched row's own name (what `pbot user ls` shows), so the member can be
+  `<member name>` is the matched row's `display_name` (the field `pbot user ls --json` reports, and
+  what `pbot user ls`'s table shows for a row that has one), so the member can be
   found from the message.
 - `wi ls --assignee me` with no matching rows prints a note naming the principal, the shadow bot
   member and its id, and the next command to run (`pbot wi ls -p <project> --assignee '<member name or uuid>'`,
@@ -117,11 +118,15 @@ without reading the source:
 - When no shadow bot member exists, `me` fails (exit 3) with a hint naming `pbot user ls` instead of
   handing back an id that would be silently ignored.
 - If the workspace member list itself cannot be read, `wi ls --assignee` with a name or `me` fails
-  with the same kind of hint (the filter cannot be answered without it, and dropping the filter would
-  return rows nobody asked for), while an explicit member id still filters — there the list only
-  supplies the display name. A plain listing still runs either way: the member list is enrichment for
-  it, so the assignee column shows member ids instead of names and a warning says which call was
-  denied.
+  (exit 3) with a hint naming `pbot user ls` — the filter cannot be answered without the list, and
+  dropping the filter would return rows nobody asked for — while an explicit member id still filters,
+  because there the list only supplies the display name.
+- A plain listing still runs either way: for it the member list is enrichment, so the assignee column
+  falls back to the member id's first 8 characters and a warning says which call was denied —
+  `warning: could not read the workspace member list (…); assignee names will show the member id's
+  first 8 characters — check access with 'pbot user ls'`. The list is only read when it will be used:
+  a listing with no `--assignee` whose rows carry no assignees makes no member request and prints no
+  warning.
 
 A human credential's `me` output is unchanged: it resolves to the account's own member id, and an
 explicit name or UUID never prints an identity note.

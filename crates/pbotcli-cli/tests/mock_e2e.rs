@@ -2494,7 +2494,12 @@ fn wi_ls_degrades_the_assignee_names_when_the_member_list_is_denied() {
         err.contains("could not read the workspace member list"),
         "{err}"
     );
-    assert!(err.contains("assignee names will show their ids"), "{err}");
+    // `render.rs` falls back to the id's first 8 characters, so the warning says
+    // that rather than "their ids".
+    assert!(
+        err.contains("assignee names will show the member id's first 8 characters"),
+        "{err}"
+    );
     assert!(err.contains("pbot user ls"), "{err}");
     assert!(!err.contains("no read access to"), "{err}");
 }
@@ -2582,7 +2587,8 @@ fn wi_ls_single_project_denial_does_not_advise_the_flag_that_was_used() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("no read access to Demo"), "{err}");
     assert!(!err.contains("pass -p"), "{err}");
-    assert!(!err.contains("of 1 projects"), "{err}");
+    // The verb and the scanned count stay, so the note still says what happened.
+    assert!(err.contains("listed 0 of 1 projects"), "{err}");
 }
 
 #[test]
@@ -2756,4 +2762,182 @@ fn wi_ls_assignee_with_an_id_degrades_when_the_member_list_is_denied() {
         err.contains("could not read the workspace member list"),
         "{err}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Round 4: lazy member reads, filter interaction, the full-name fallback, and
+// the all-projects-skipped hint.
+// ---------------------------------------------------------------------------
+
+/// Rows that carry no assignees at all: nothing for the member map to resolve.
+const ITEMS_WITHOUT_ASSIGNEES: &str = r#"{"results":[{"id":"wi1","name":"A task","sequence_id":1,"priority":"high","state":"s1","labels":["l1"],"project":"p1","created_at":"2026-01-02T00:00:00Z","updated_at":"2026-01-02T00:00:00Z"}],"next_cursor":null,"next_page_results":false}"#;
+
+#[test]
+fn wi_ls_does_not_read_the_member_list_when_nothing_needs_it() {
+    // No `--assignee` and no row carries an assignee: the member list is not
+    // enrichment anyone will read, so it must not be fetched — and a denial must
+    // not produce a warning about names that were never going to be resolved.
+    let mut server = Server::new();
+    mock_list(&mut server, "/api/v1/workspaces/ws/projects/", PROJECTS);
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/work-items/",
+        ITEMS_WITHOUT_ASSIGNEES,
+    );
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/states/",
+        STATES,
+    );
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/labels/",
+        LABELS,
+    );
+    let members = server
+        .mock("GET", "/api/v1/workspaces/ws/members/")
+        .match_query(Matcher::Any)
+        .with_status(403)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"detail":"no active grant"}"#)
+        .expect(0)
+        .create();
+
+    let out = run(
+        &["wi", "ls", "-p", "Demo", "--json", "--no-cache"],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    members.assert();
+    let parsed: serde_json::Value = serde_json::from_str(&stdout_of(&out)).expect("valid JSON");
+    assert_eq!(parsed.as_array().map(Vec::len), Some(1));
+    assert_eq!(parsed[0]["assignee_names"], "");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!err.contains("member list"), "{err}");
+}
+
+#[test]
+fn wi_ls_assignee_me_state_filter_emptying_the_list_prints_no_note() {
+    // The empty-result note answers "the `me` resolution found nothing", not
+    // "the listing is empty": when `--assignee me` matched and a later filter
+    // emptied the rows, the note must stay away (reng filed the opposite claim).
+    let mut server = Server::new();
+    mock_sp_project_reads(&mut server, ITEMS_ASSIGNED_TO_THE_SHADOW_BOT);
+
+    let out = run(
+        &[
+            "wi",
+            "ls",
+            "-p",
+            "Demo",
+            "--assignee",
+            "me",
+            "--state",
+            "NoSuchState",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(stdout_of(&out).trim(), "[]");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!err.contains("note:"), "{err}");
+}
+
+#[test]
+fn assignee_me_note_falls_back_to_the_rows_full_name() {
+    // A row with no `display_name` is named by its full name — the middle
+    // fallback of `member_display_name`, which the composition must not replace.
+    let mut server = Server::new();
+    mock_list(&mut server, "/api/v1/workspaces/ws/projects/", PROJECTS);
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/work-items/",
+        ITEMS,
+    );
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/states/",
+        STATES,
+    );
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/labels/",
+        LABELS,
+    );
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/members/",
+        r#"[{"id":"u-shadow","first_name":"svc-kimicode-bot","last_name":"Bot"}]"#,
+    );
+    mock_me(&mut server, ME_SERVICE_PRINCIPAL);
+
+    let out = run(
+        &[
+            "wi",
+            "ls",
+            "-p",
+            "Demo",
+            "--assignee",
+            "me",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("'svc-kimicode-bot Bot' (member id u-shadow)"),
+        "the row's full name must be quoted: {err}"
+    );
+}
+
+#[test]
+fn wi_show_without_project_reports_when_every_project_was_skipped() {
+    // Every project denied: the hint must list them all and say what to do,
+    // rather than reporting a plain "not found" over a search that never ran.
+    let mut server = Server::new();
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/",
+        PROJECTS_ONE_UNREADABLE,
+    );
+    for path in [
+        "/api/v1/workspaces/ws/projects/p-locked/work-items/",
+        "/api/v1/workspaces/ws/projects/p1/work-items/",
+    ] {
+        server
+            .mock("GET", path)
+            .match_query(Matcher::Any)
+            .with_status(403)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"detail":"no active grant"}"#)
+            .create();
+    }
+
+    let out = run(
+        &["wi", "show", "nowhere-99", "--json", "--no-cache"],
+        &server.url(),
+    );
+    assert_eq!(out.status.code(), Some(3));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("Work item not found: nowhere-99"), "{err}");
+    assert!(err.contains("skipped 2 project(s)"), "{err}");
+    assert!(err.contains("Locked") && err.contains("Demo"), "{err}");
+    assert!(err.contains("Pass -p <project>"), "{err}");
+    assert!(String::from_utf8_lossy(&out.stdout).is_empty(), "{err}");
 }

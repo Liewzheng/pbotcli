@@ -39,7 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `<name> (service principal)`, or `<name> (SP owned by <owner>)` when the
   `/users/me/` payload names the owning human. A bot token no longer reads like
   a person with fields that failed to load; a human credential's rows are
-  unchanged, and `--json` still prints the raw payload.
+  unchanged, and `--json` still prints the raw payload — the payload gains an
+  `owner` key only if the server sends one (it does not today), which is
+  additive for every credential kind.
 - A cross-project lookup (`pbot wi show`, `pbot wi ls` without `-p`) no longer
   fails on the first project the credential cannot read: a project that answers
   403 — what a service principal gets on every project it has no grant for — or
@@ -67,10 +69,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   instead of resolving to nothing, and a service-principal `me` result reports
   what it resolved to — the member's own name and its UUID — on every write and
   whenever the filter finds nothing. If the workspace member list is unreadable,
-  `wi ls --assignee` fails with a hint while a plain listing still runs with ids
-  in place of assignee names and a warning naming the denied call. A human
-  credential's `me` output is unchanged, and an explicit name or UUID prints no
-  identity note.
+  `wi ls --assignee` fails with a hint while a plain listing still runs with the
+  member id's first 8 characters in place of assignee names and a warning naming
+  the denied call — and the list is only read when a listing will actually use it
+  (an `--assignee` filter, or rows that carry assignees). A human credential's
+  `me` output is unchanged, and an explicit name or UUID prints no identity note.
 - `docs/rust-rewrite.md` no longer lists crates.io as a live install channel: the
   crate is not published, and the released CLI comes from the Homebrew tap.
 

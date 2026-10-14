@@ -96,10 +96,11 @@ pbot whoami [--json]
 
 - 任何以 `--assignee me` 发起的写入（`wi assign`、`wi create`、`wi update`）在写入落地后都会打印
   `Work item assigned to <名称> (service principal) as its shadow bot member '<成员行名称>' (member id <uuid>).`
-  其中 `<成员行名称>` 取匹配到的成员行自身的名字（即 `pbot user ls` 里显示的那个），便于据此定位该成员。
+  其中 `<成员行名称>` 取匹配到的成员行自身的 `display_name`（即 `pbot user ls --json` 里的该字段；人读表格对带该字段的行也显示它），便于据此定位该成员。
 - `wi ls --assignee me` 在没有匹配行时打印一行 note：说明主体、影子 bot 成员及其 UUID，以及下一条应执行的命令（`pbot wi ls -p <project> --assignee '<成员名或 uuid>'`，成员列表用 `pbot user ls`）。
 - 找不到影子 bot 成员时，`me` 报错（退出码 3），hint 指向 `pbot user ls`，而不是返回一个会被静默忽略的 id。
-- 如果成员列表本身读不到：`wi ls --assignee` 用名字或 `me` 时会以同样的 hint 报错（没有成员列表无法完成过滤，而丢掉过滤会返回调用方没要的行）；显式给出的成员 id 仍可正常过滤 —— 那种情况下成员列表只用于显示名字。普通列表两种情况下都照常运行 —— 成员列表对它只是富化信息，负责人一列会显示成员 id 而不是名字，并有一行 warning 指明是哪个调用被拒。
+- 如果成员列表本身读不到：`wi ls --assignee` 用名字或 `me` 时会以 hint 报错（退出码 3，没有成员列表无法完成过滤，而丢掉过滤会返回调用方没要的行）；显式给出的成员 id 仍可正常过滤 —— 那种情况下成员列表只用于显示名字。
+- 普通列表两种情况下都照常运行 —— 成员列表对它只是富化信息：负责人一列回退为成员 id 的前 8 个字符，并有一行 warning 指明是哪个调用被拒（`warning: could not read the workspace member list (…); assignee names will show the member id's first 8 characters — check access with 'pbot user ls'`）。成员列表只在真正会被用到时才读取：不带 `--assignee`、且所有行的负责人为空的列表不会发起该请求，也不会打印 warning。
 
 人类凭证的 `me` 输出保持不变：解析到账号自身的成员 id；显式给出的名字或 UUID 也不会打印任何身份 note。
 
