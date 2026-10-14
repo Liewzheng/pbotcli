@@ -95,7 +95,7 @@ That installs both binaries into `~/.cargo/bin`:
 | Binary | Notes |
 |---|---|
 | `pbotcli` | Full package name. |
-| `pbot` | Short alias of the same binary; used in every example here. |
+| `pbot` | Short-named binary built from the same `pbotcli-cli` package; used in every example here. |
 
 The durable install is the Homebrew tap above — `brew install pbotcli`, then `brew upgrade pbotcli`;
 never leave a test build on `PATH` beside the released `pbotcli`.
