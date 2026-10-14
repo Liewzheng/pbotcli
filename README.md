@@ -83,7 +83,8 @@ use the shell installer if you're on such a device.
 
 ### From a checkout
 
-The CLI is not published to crates.io yet — install it from a checkout:
+The CLI is not published to crates.io yet. A build from a checkout is a **test build** — use it to
+exercise a branch, then remove it with `cargo uninstall pbotcli-cli`:
 
 ```bash
 cargo install --path crates/pbotcli-cli --locked
@@ -96,7 +97,8 @@ That installs both binaries into `~/.cargo/bin`:
 | `pbotcli` | Full package name. |
 | `pbot` | Short alias of the same binary; used in every example here. |
 
-Update later with the same command from a fresh checkout (`--force` if the version is unchanged).
+The durable install is the Homebrew tap above — `brew install pbotcli`, then `brew upgrade pbotcli`;
+never leave a test build on `PATH` beside the released `pbotcli`.
 
 ## Configure
 

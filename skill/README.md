@@ -13,14 +13,15 @@
 
 ## 前置条件（必须先满足）
 
-1. **安装 pbot**（任一途径）：
+1. **安装 pbot**：正式版从 Homebrew tap 安装 —— `brew install Liewzheng/tap/pbotcli`，之后
+   `brew upgrade pbotcli`；也可以用 GitHub Releases 页的直接下载 / 一键脚本
+   （https://github.com/Liewzheng/pbotcli/releases）。
+
+   从源码装的是**测试版**，用完即删 —— 用 `cargo uninstall pbotcli-cli` 删掉，别让测试版和
+   正式版同时在 `PATH` 上：
 
    ```bash
-   # 从源码（main 检出后）
-   cargo install --path crates/pbotcli-cli --locked
-
-   # 或 GitHub Releases 直接下载/一键脚本
-   # https://github.com/Liewzheng/pbotcli/releases
+   cargo install --path crates/pbotcli-cli --locked   # 测试版，用完即删
    ```
 
 2. **配置凭据**，写入任一被发现的位置（按优先级：`~/.config/pbot/config.toml` → `~/.pbot` → `~/.planecli` → `~/.plane_api`）或导出环境变量：
