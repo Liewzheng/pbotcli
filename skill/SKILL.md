@@ -4,21 +4,24 @@ description: "Manage Plane.so through the pbot / pbotcli CLI — work items, pro
 allowed-tools: Bash(pbot *, pbotcli *)
 metadata:
   author: pbotcli maintainers
-  version: "1.5.0"
+  version: "1.5.1"
 ---
 
 # pbot — pbotcli
 
-> **Skill version: 1.5.0 — must match `pbot --version`.** A stale skill is
+> **Skill version: 1.5.1 — must match `pbot --version`.** A stale skill is
 > worse than no skill: every command and flag listed below may have been
 > added, renamed or removed since this was written. Before answering any
 > `pbot …` question, verify the version with `pbot --version`. If it differs
-> from `1.5.0`, this document is stale:
+> from `1.5.1`, this document is stale:
 >
-> - End users: run `cargo install pbotcli-cli --locked` (or use the
->   prebuilt installer from the Releases page) to upgrade, then re-ask.
-> - Repo contributors / agents working against a checkout: run
->   `cargo install --path crates/pbotcli-cli --locked` from the repo root.
+> - End users: `brew upgrade pbotcli` (or `brew install Liewzheng/tap/pbotcli`
+>   the first time), or the prebuilt installer from the Releases page, then
+>   re-ask.
+> - Repo contributors / agents working against a checkout: the release is the
+>   brew build, so a `make install` / `cargo install --path crates/pbotcli-cli`
+>   build is a throwaway test build for exercising a branch — remove it with
+>   `cargo uninstall pbotcli-cli` when you are done.
 >
 > The repo's CI lint (`.github/workflows/version-lint.yml`) fails any PR
 > that lets this document drift from `Cargo.toml`'s
@@ -26,16 +29,22 @@ metadata:
 > `main`.
 
 **The command is `pbot`** (short alias of the full binary `pbotcli`) — a single
-static binary installed at `~/.cargo/bin` (both `pbot` and `pbotcli` are
-installed). Every command group (whoami, configure, project, wi, comment,
-relations, attachment, doc, intake, label, state, module, cycle, user, cache),
-fuzzy resolution, `--json` dual output, caching, markdown input and inline images.
+static binary installed from the Homebrew tap (`brew install Liewzheng/tap/pbotcli`),
+which provides both `pbot` and `pbotcli`. Every command group (whoami, configure,
+project, wi, comment, relations, attachment, doc, intake, label, state, module,
+cycle, user, cache), fuzzy resolution, `--json` dual output, caching, markdown input
+and inline images.
 
-Install / update the local binary from the release line after each release:
+Install and update the released CLI from the Homebrew tap — never from a checkout:
 
 ```bash
-cargo install --path <repo>/crates/pbotcli-cli --locked   # repo = main checkout
+brew install Liewzheng/tap/pbotcli   # first time
+brew upgrade pbotcli                 # after each release
 ```
+
+A `make install` / `cargo install --path crates/pbotcli-cli --locked` build is a
+**test build** for exercising a branch; remove it with `cargo uninstall pbotcli-cli`
+afterwards, so the released `pbotcli` stays the only one on `PATH`.
 
 ## Key Concepts
 
@@ -48,10 +57,12 @@ cargo install --path <repo>/crates/pbotcli-cli --locked   # repo = main checkout
 ## Setup & Authentication
 
 Installed from our release repo `github.com/Liewzheng/pbotcli`, whose single long-lived
-branch is `main` — completed tasks land there through PRs and releases are tagged there. After
-each new release, reinstall by default — do not ask first:
-`cargo install --path crates/pbotcli-cli --locked` (run in the main checkout;
-installs both `pbotcli` and `pbot` into `~/.cargo/bin`)
+branch is `main` — completed tasks land there through PRs and releases are tagged there.
+Official releases are installed and updated from the Homebrew tap: `brew install
+Liewzheng/tap/pbotcli` once, then `brew upgrade pbotcli`. A `cargo install` / `make install`
+build of a checkout is only a throwaway test build — remove it with
+`cargo uninstall pbotcli-cli` when the branch is done, so the brew release stays the only
+`pbotcli` on `PATH`.
 
 Config precedence: CLI flags > env vars (`PLANE_BASE_URL`, `PLANE_API_KEY`, `PLANE_WORKSPACE`) > config file, discovered highest-priority-first from `~/.config/pbot/config.toml` (TOML), `~/.pbot`, `~/.planecli`, then `~/.plane_api` (key=value lines, chmod 600). `pbot configure` writes the active config file (the highest-priority existing one; `~/.plane_api` by default).
 

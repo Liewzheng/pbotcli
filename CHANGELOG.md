@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+- Official releases are installed and updated from the Homebrew tap
+  (`brew install Liewzheng/tap/pbotcli` once, then `brew upgrade pbotcli`). A
+  `cargo install` / `make install` build of a checkout is a throwaway test build
+  for exercising a branch — remove it with `cargo uninstall pbotcli-cli` when the
+  branch is done, so the released `pbotcli` stays the only one on `PATH`.
+
 ## [1.5.0] - 2026-10-13
 
 ### Changed

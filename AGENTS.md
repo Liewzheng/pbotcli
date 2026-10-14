@@ -29,7 +29,7 @@ All docs, comments, and commit messages in English.
 Everything runs through `cargo`; common tasks are wrapped in the Makefile.
 
 ```bash
-make install                       # cargo install the CLI locally (pbot + pbotcli)
+make install                       # throwaway test build (cargo install into ~/.cargo/bin)
 make build                         # cargo build --workspace
 make test                          # cargo test --workspace
 make test-v                        # the same, showing test output (--nocapture)
@@ -39,6 +39,12 @@ make check                         # lint + test — run before committing
 make run ARGS="wi ls -p Frontend"  # run the CLI (cargo run --bin pbot)
 make e2e                           # scripts/e2e.sh — live smoke test against a real instance
 ```
+
+`make install` is a **throwaway test build**: it `cargo install`s the working tree into
+`~/.cargo/bin` so a branch can be exercised by hand. The released CLI is installed from the
+Homebrew tap, never from a checkout (see [Release management](#release-management)); remove the test
+build with `cargo uninstall pbotcli-cli` once the branch is done, so the only `pbotcli` on `PATH` is
+the release.
 
 CI (`.github/workflows/ci.yml`) runs the same gate on every push and pull request:
 `cargo fmt --all -- --check`, `cargo clippy --locked --workspace --all-targets -- -D warnings`,
@@ -291,9 +297,13 @@ been removed. The version and the changelog are edited on
   It goes through the full review gate — the same `reng` run, the same 5-minute wait, the same
   per-finding replies, no shortcut for docs or version bumps — and the **human merges it**. The
   agent never merges and `main` never takes a direct push (see Task workflow).
-- After a release lands, reinstall the local CLI from the merged `main` checkout by
-  default (no need to ask first): `cargo install --path crates/pbotcli-cli --locked`
-  (installs both `pbotcli` and the `pbot` alias into `~/.cargo/bin`).
+- **Official releases are installed and updated from the Homebrew tap**, never from a checkout:
+  `brew install Liewzheng/tap/pbotcli` once, then `brew upgrade pbotcli`. (The release workflow's
+  `publish-homebrew-formula` job pushes `Formula/pbotcli.rb` to `Liewzheng/homebrew-tap`.) A
+  `cargo install` / `make install` build of a checkout is a **test build**: use it to exercise a
+  branch, then remove it with `cargo uninstall pbotcli-cli`, so the released `pbotcli` stays the
+  only one on `PATH`. A stale cargo-installed copy sitting next to the brew release is the failure
+  this rule prevents — never keep a test build "for good" after a release.
 - **Publishing artifacts** (needs the human's go-ahead + external accounts): tag the release and
   push — `git tag v<version> && git push pbotcli v<version>` — so the committed cargo-dist
   GitHub Actions workflow builds per-platform archives + shell/powershell installers to the
