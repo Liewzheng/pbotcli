@@ -124,8 +124,8 @@ pub enum Command {
     },
     /// Manage documents (pages).
     ///
-    /// Without -p/--project, commands operate on workspace pages; with -p they
-    /// operate on the project's pages.
+    /// The v1 API serves pages under a project only — there is no workspace-level
+    /// pages route — so every subcommand needs -p/--project.
     #[command(
         visible_alias = "docs",
         visible_alias = "document",
@@ -746,10 +746,11 @@ pub enum IntakeCmd {
 
 #[derive(Subcommand)]
 pub enum DocCmd {
-    /// List documents (workspace pages, or project pages with -p).
+    /// List documents (project pages; -p/--project required).
     #[command(alias = "ls")]
     List {
-        /// Project name, identifier, or UUID. If omitted, lists workspace pages.
+        /// Project name, identifier, or UUID. Required — the v1 API serves
+        /// project pages only, and omitting it is rejected before any request.
         #[arg(long, short = 'p')]
         project: Option<String>,
     },
@@ -789,7 +790,8 @@ pub enum DocCmd {
         /// --content-raw.
         #[arg(long)]
         content_html: Option<String>,
-        /// Project name, identifier, or UUID. If omitted, creates a workspace page.
+        /// Project name, identifier, or UUID. Required — the v1 API serves
+        /// project pages only, and omitting it is rejected before any request.
         #[arg(long, short = 'p')]
         project: Option<String>,
         /// Report what would be written (target, images, verdicts) and exit
@@ -819,7 +821,8 @@ pub enum DocCmd {
         /// with --content (and its alias --content-md) and --content-raw.
         #[arg(long)]
         content_html: Option<String>,
-        /// Project name, identifier, or UUID. If omitted, operates on a workspace page.
+        /// Project name, identifier, or UUID. Required — the v1 API serves
+        /// project pages only, and omitting it is rejected before any request.
         #[arg(long, short = 'p')]
         project: Option<String>,
         /// Report what would be written (target, images, verdicts) and exit
@@ -834,7 +837,8 @@ pub enum DocCmd {
     Archive {
         /// Page name or UUID.
         doc: String,
-        /// Project name, identifier, or UUID. If omitted, operates on a workspace page.
+        /// Project name, identifier, or UUID. Required — the v1 API serves
+        /// project pages only, and omitting it is rejected before any request.
         #[arg(long, short = 'p')]
         project: Option<String>,
     },
@@ -846,7 +850,8 @@ pub enum DocCmd {
     Delete {
         /// Page name or UUID.
         doc: String,
-        /// Project name, identifier, or UUID. If omitted, operates on a workspace page.
+        /// Project name, identifier, or UUID. Required — the v1 API serves
+        /// project pages only, and omitting it is rejected before any request.
         #[arg(long, short = 'p')]
         project: Option<String>,
     },
@@ -4182,6 +4187,12 @@ async fn cmd_state_delete(
 /// The pages scope a `doc` command targets: the project's pages when `-p` is
 /// given, the workspace's pages otherwise (mirrors the Python commands, where
 /// every scope decision is `project → project pages, else workspace pages`).
+///
+/// This is the one place a page scope resolves a project. `doc show` uses it
+/// directly: it resolves a UUID through the scope's route, so it attempts the
+/// lookup and turns the resulting 404 into the `-p <project>` hint. Every other
+/// `doc` command wraps it in [`require_page_scope`], which rejects a missing
+/// `-p` before any of that happens.
 async fn page_scope(client: &PlaneClient, project: Option<&str>) -> Result<PageScope, PlaneError> {
     match project {
         Some(p) => {
@@ -4190,6 +4201,31 @@ async fn page_scope(client: &PlaneClient, project: Option<&str>) -> Result<PageS
         }
         None => Ok(PageScope::Workspace),
     }
+}
+
+/// The project scope a `doc` command cannot work without: a thin rejection layer
+/// over [`page_scope`], so `-p` is resolved in exactly one place. A missing flag
+/// is a local `Validation` error (exit 5) with a hint naming it — never a
+/// request to a route the server does not have.
+///
+/// `doc ls` / `create` / `update` / `archive` / `delete` all funnel through here
+/// rather than each inventing its own failure mode. That includes the `--dry-run`
+/// previews of `create` and `update`: a plan for an action that could never run
+/// is not a useful preview.
+async fn require_page_scope(
+    client: &PlaneClient,
+    project: Option<&str>,
+) -> Result<PageScope, PlaneError> {
+    if project.is_none() {
+        return Err(PlaneError::Validation {
+            message: "Project is required for this command.".into(),
+            hint: Some(
+                "This server has no workspace-level pages route; pass `-p <project>` to target the project's pages."
+                    .into(),
+            ),
+        });
+    }
+    page_scope(client, project).await
 }
 
 /// Resolve a page reference by UUID (direct fetch) or fuzzy name (against the
@@ -4265,17 +4301,9 @@ async fn cmd_doc_list(
     project: Option<&str>,
     json: bool,
 ) -> Result<(), PlaneError> {
-    // Python parity: listing documents is project-scoped only.
-    let pid = match project {
-        Some(p) => resolve_project(p, client).await?.id,
-        None => {
-            return Err(PlaneError::Validation {
-                message: "Project is required for listing documents.".into(),
-                hint: Some("Use -p/--project <name-or-id> to specify the project.".into()),
-            });
-        }
-    };
-    let scope = pbotcli_client::PageScope::Project(pid);
+    // Listing documents is project-scoped only: `-p` is required, not a
+    // preference (the workspace-level route does not exist).
+    let scope = require_page_scope(client, project).await?;
     let pages = client.list_pages(&scope).await?;
     if json {
         let views: Vec<Value> = pages.iter().map(page_json).collect();
@@ -4955,7 +4983,7 @@ async fn cmd_doc_create(
     // preflight, scope resolution, page creation). clap rejects
     // --content + --content-md at parse time because they share a field.
     let description_html = doc_description(content, content_raw, content_html)?;
-    let scope = page_scope(client, project).await?;
+    let scope = require_page_scope(client, project).await?;
     if dry_run {
         let target = format!(
             "workspace={} project={} page=(new page \"{title}\")",
@@ -5046,7 +5074,7 @@ async fn cmd_doc_update(
     // (scope resolution, page lookup). clap already rejects
     // --content + --content-md at parse time because they share a field.
     let _ = doc_description(content, content_raw, content_html)?;
-    let scope = page_scope(client, project).await?;
+    let scope = require_page_scope(client, project).await?;
     let found = resolve_page(client, &scope, doc).await?;
     if dry_run {
         let target = format!(
@@ -5102,7 +5130,7 @@ async fn cmd_doc_archive(
     doc: &str,
     project: Option<&str>,
 ) -> Result<(), PlaneError> {
-    let scope = page_scope(client, project).await?;
+    let scope = require_page_scope(client, project).await?;
     let found = resolve_page(client, &scope, doc).await?;
     let name = found.name.clone().unwrap_or_else(|| found.id.clone());
     let today = today_ymd();
@@ -5122,7 +5150,7 @@ async fn cmd_doc_delete(
     doc: &str,
     project: Option<&str>,
 ) -> Result<(), PlaneError> {
-    let scope = page_scope(client, project).await?;
+    let scope = require_page_scope(client, project).await?;
     let found = resolve_page(client, &scope, doc).await?;
     let name = found.name.clone().unwrap_or_else(|| found.id.clone());
     let today = today_ymd();

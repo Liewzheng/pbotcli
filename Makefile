@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help install build run test test-v lint format check e2e clean
+.PHONY: help install build run test test-v lint format format-check check e2e clean
 
 # ──────────────────────────────────────────────
 # Setup
@@ -49,7 +49,13 @@ format: ## Format the workspace with rustfmt
 
 	cargo fmt --all
 
-check: lint test ## Run lint + tests
+format-check: ## Check formatting without rewriting files (what CI runs)
+	@echo "format-check - Check formatting with rustfmt"
+
+	cargo fmt --all -- --check
+
+# The same three checks CI runs, minus CI's --locked (see AGENTS.md, Commands).
+check: format-check lint test ## Run the local gate: format check + lint + tests
 
 # ──────────────────────────────────────────────
 # End-to-end & clean

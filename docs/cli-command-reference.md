@@ -717,6 +717,15 @@ pbot intake enabled <project> [--json]
 
 ## pbot doc
 
+Every `doc` subcommand needs `-p <project>`, because the v1 API serves pages
+under a project only and there is no workspace-level pages route. A missing `-p`
+on `list`, `create`, `update`, `archive`, or `delete` is rejected locally before
+any request — exit 5 with a `Hint:` naming `-p <project>`. `show` is the one
+exception: it attempts the lookup and turns the resulting 404 into the same
+hint, so a page UUID that only exists in another scope still gets a clear answer.
+This covers `--dry-run` as well: the `create` and `update` previews take the same
+`-p` and are rejected the same way, where they previously printed a plan without it.
+
 ### pbot doc list
 
 List documents. `-p` is required (project pages).
@@ -752,9 +761,9 @@ Create a document.
 **Aliases** `new`
 
 ```
-pbot doc create --title <title>
+pbot doc create --title <title> -p <project>
                 (--content <markdown> | --content-md <markdown> | --content-raw <text> | --content-html <html>)
-                [-p <project>] [--dry-run] [--json]
+                [--dry-run] [--json]
 ```
 
 **Options**
@@ -766,7 +775,7 @@ pbot doc create --title <title>
 | `--content-md <markdown>` | Alias of `--content`; same path (markdown → HTML). |
 | `--content-raw <text>` | Content as plain text: blank lines separate paragraphs, single newlines become `<br/>`. Markdown syntax (`#`, `-`, `*`, `[ ]`) is treated literally. This is what `--content` did before v1.4.0. |
 | `--content-html <html>` | Content as raw HTML, stored verbatim (rich layout). |
-| `-p, --project <name\|id>` | Project; omit to create a workspace page. |
+| `-p, --project <name\|id>` | Project (required; omitting it is rejected locally with exit code 5). |
 | `--dry-run` | Report the target and every image verdict without writing anything; exits non-zero when an image is missing or its MIME is not allowed. References the grammar rejects are listed under `unprocessed` and counted in the summary — they do not change the exit code. |
 
 The four content inputs are mutually exclusive.
@@ -811,9 +820,9 @@ $ pbot doc create --title "Spec" -p PLANECLI --content-md "$(cat spec.md)" --dry
 Update a document.
 
 ```
-pbot doc update <doc> [--title <title>]
+pbot doc update <doc> -p <project> [--title <title>]
                      [--content <markdown> | --content-md <markdown> | --content-raw <text> | --content-html <html>]
-                     [-p <project>] [--dry-run] [--json]
+                     [--dry-run] [--json]
 ```
 
 **Options**
@@ -825,7 +834,7 @@ pbot doc update <doc> [--title <title>]
 | `--content-md <markdown>` | New content as Markdown (image handling as in `doc create`). |
 | `--content-raw <text>` | New content as plain text (the v1.3.x `--content` behaviour). |
 | `--content-html <html>` | New content as raw HTML, stored verbatim. |
-| `-p, --project <name\|id>` | Project; omit for a workspace-level page. |
+| `-p, --project <name\|id>` | Project (required; omitting it is rejected locally with exit code 5). |
 | `--dry-run` | Report the target and every image verdict without writing anything; exits 5 when an image cannot be processed. |
 
 ### pbot doc archive
@@ -833,7 +842,7 @@ pbot doc update <doc> [--title <title>]
 Archive (trash) a page without deleting it. The page stays recoverable in the web UI trash.
 
 ```
-pbot doc archive <doc> [-p <project>]
+pbot doc archive <doc> -p <project>
 ```
 
 ### pbot doc delete
@@ -841,7 +850,7 @@ pbot doc archive <doc> [-p <project>]
 Delete a page. The API only deletes archived pages, so this archives the page first (verifying the archive landed) and then deletes it.
 
 ```
-pbot doc delete <doc> [-p <project>]
+pbot doc delete <doc> -p <project>
 ```
 
 ---

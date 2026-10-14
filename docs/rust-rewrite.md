@@ -72,7 +72,9 @@ subset) · tabled · html-escape · regex · dirs · moka (or a file TTL cache).
 
 ## Distribution
 
-- **crates.io** → `cargo install pbotcli-cli` (git install as fallback).
+- **crates.io** → `cargo install pbotcli-cli` (git install as fallback). Not published yet —
+  the channel needs a crates.io token, and until then the released CLI comes from the Homebrew
+  tap.
 - **cargo-dist** produces GitHub Releases (per-platform static binaries +
   sha256), an npm package (per-platform optionalDependencies, pnpm-compatible),
   and shell/PowerShell installers.
