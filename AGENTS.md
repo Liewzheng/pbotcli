@@ -35,7 +35,8 @@ make test                          # cargo test --workspace
 make test-v                        # the same, showing test output (--nocapture)
 make lint                          # cargo clippy --workspace --all-targets -- -D warnings
 make format                        # cargo fmt --all
-make check                         # lint + test — run before committing
+make format-check                  # cargo fmt --all -- --check (no rewrite)
+make check                         # format-check + lint + test — run before committing
 make run ARGS="wi ls -p Frontend"  # run the CLI (cargo run --bin pbot)
 make e2e                           # scripts/e2e.sh — live smoke test against a real instance
 ```
@@ -46,11 +47,13 @@ Homebrew tap, never from a checkout (see [Release management](#release-managemen
 build with `cargo uninstall pbotcli-cli` once the branch is done, so the only `pbotcli` on `PATH` is
 the release.
 
-CI (`.github/workflows/ci.yml`) runs the same gate on every push and pull request:
+CI (`.github/workflows/ci.yml`) runs the same three checks on every push and pull request —
 `cargo fmt --all -- --check`, `cargo clippy --locked --workspace --all-targets -- -D warnings`,
-and `cargo test --locked --workspace` on Linux, macOS, and Windows — all three matter because
-config paths and permission handling are platform-sensitive. A green local
-`make check` means a green CI run.
+and `cargo test --locked --workspace` — so `make check` catches most CI failures before they are
+pushed. The two differences are deliberate: CI passes `--locked`, so a `Cargo.toml` change that
+was never reflected in a committed `Cargo.lock` fails there and passes locally (the local gate
+must stay usable mid-change), and CI runs on macOS and Windows as well, where config paths and
+permission handling are platform-sensitive.
 
 Single test: `cargo test --workspace <name>` (e.g. `cargo test -p pbotcli-resolve resolve_project`),
 or `cargo run --bin pbot -- wi ls` for the CLI without installing it. Edition 2024, rustfmt
@@ -245,8 +248,15 @@ replace step 1: the PR gate still runs and its findings still get answered there
    Filter on the report heading rather than taking `.[0]`: other reviews may sit on the PR, and
    `.[0]` would then hand back the wrong body. `reng` updates its report in place, so a PR normally
    carries exactly one, and `last` just guards against a newer one being present.
-   `gh pr view --comments` fails on this repo with a GraphQL Projects-classic deprecation error, so
-   do not reach for it.
+   `gh pr view --comments` and `gh pr edit <n> --body-file <file>` both misbehave on this repo — a
+   Projects-classic GraphQL deprecation. The first fails outright; the second is worse, because it
+   prints only that GraphQL error, **exits 0, and writes nothing**. Never trust its exit code. Edit a
+   PR body through REST and re-read it to confirm the write:
+
+   ```bash
+   gh api -X PATCH repos/Liewzheng/pbotcli/pulls/<n> --input <body.json>
+   gh api repos/Liewzheng/pbotcli/pulls/<n> -q .body      # confirm it landed
+   ```
 2. **Wait 5 minutes from the moment the review command starts before reading anything.** `START`
    above holds that moment in epoch seconds; do not read until `date +%s` is at least `START + 300`.
    The pause is fixed by the maintainer, not derived from `reng`'s runtime: the command blocks until
@@ -260,6 +270,12 @@ replace step 1: the PR gate still runs and its findings still get answered there
    a merge. An expert rendered as *"输出解析失败 / failed to parse its output"* counts as
    **unreviewed, not clean** — say so when reporting the findings. A finding with an empty title is a
    parse artifact rather than a reviewable item: name it as such in the triage comment and move on.
+   **Coverage counts as much as the verdict.** A report that reviewed nothing, or only part of the
+   diff, is not a pass either: record it as **unreviewed**, name the files it skipped, and do not ask
+   for a merge. Get the mechanism right when you explain it — `reng` does not skip Markdown; it skips
+   `CHANGELOG.md` and lockfiles (`Cargo.lock`). A PR whose diff is a changelog alone therefore comes
+   back with an empty report, and a mixed diff comes back with exactly those files missing (a
+   9-file diff reviewed as 7). Read the report's coverage before you read its findings.
 4. **Triage every finding and reply to it on the PR — none may be left unanswered.** The report is a
    review body, so there is normally no inline thread to reply in; each round gets its own top-level
    `gh pr comment <n> --repo Liewzheng/pbotcli --body-file <file>` — separate comments, not one

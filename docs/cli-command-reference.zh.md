@@ -716,6 +716,8 @@ pbot intake enabled <project> [--json]
 
 ## pbot doc
 
+所有 `doc` 子命令都必须带 `-p <project>`：v1 API 只提供项目级页面路由，不存在工作区级页面路由。`list` / `create` / `update` / `archive` / `delete` 缺 `-p` 时在发请求前就被本地拒绝——退出码 5，并给出点名 `-p <project>` 的 `Hint:`。`show` 是唯一的例外：它会先尝试查询，再把 404 换成同一条提示，这样只存在于其他作用域的页面 UUID 也能得到明确答复。
+
 ### pbot doc list
 
 列出文档。必须带 `-p`（项目内页面）。
@@ -745,9 +747,9 @@ pbot doc show <doc> [-p <project>] [--json]
 **别名** `new`
 
 ```
-pbot doc create --title <title>
+pbot doc create --title <title> -p <project>
                 (--content <markdown> | --content-md <markdown> | --content-raw <text> | --content-html <html>)
-                [-p <project>] [--dry-run] [--json]
+                [--dry-run] [--json]
 ```
 
 **选项**
@@ -759,7 +761,7 @@ pbot doc create --title <title>
 | `--content-md <markdown>` | 与 `--content` 等价（同一条 markdown → HTML 路径）。 |
 | `--content-raw <text>` | 内容（纯文本：空行分段，单换行变 `<br/>`；`#`、`-`、`*`、`[ ]` 等 markdown 字符当字面）。即 v1.3.x 的 `--content` 行为。 |
 | `--content-html <html>` | 内容（原样 HTML，存原文，适合富排版）。 |
-| `-p, --project <name\|id>` | 项目；省略则创建到工作区级页面。 |
+| `-p, --project <name\|id>` | 项目（必填；省略会在本地被拒绝，退出码 5）。 |
 | `--dry-run` | 只报告目标与每张图片的判定，不做任何写入；图片缺失或 MIME 不允许时非零退出。解析不了的引用会列在 `unprocessed` 下并计入汇总行，但不改变退出码。 |
 
 四种内容输入互斥。
@@ -794,9 +796,9 @@ $ pbot doc create --title "Spec" -p PLANECLI --content-md "$(cat spec.md)" --dry
 更新文档。
 
 ```
-pbot doc update <doc> [--title <title>]
+pbot doc update <doc> -p <project> [--title <title>]
                      [--content <markdown> | --content-md <markdown> | --content-raw <text> | --content-html <html>]
-                     [-p <project>] [--dry-run] [--json]
+                     [--dry-run] [--json]
 ```
 
 **选项**
@@ -808,7 +810,7 @@ pbot doc update <doc> [--title <title>]
 | `--content-md <markdown>` | 新内容（Markdown；图片处理同 `doc create`）。 |
 | `--content-raw <text>` | 新内容（纯文本，v1.3.x 的 `--content` 行为）。 |
 | `--content-html <html>` | 新内容（原样 HTML）。 |
-| `-p, --project <name\|id>` | 项目；省略则操作工作区级页面。 |
+| `-p, --project <name\|id>` | 项目（必填；省略会在本地被拒绝，退出码 5）。 |
 | `--dry-run` | 只报告目标与每张图片判定，不做任何写入；图片不可处理时退出码 5。解析不了的引用会列在 `unprocessed` 下并计入汇总行，但不改变退出码。 |
 
 ### pbot doc archive
@@ -816,7 +818,7 @@ pbot doc update <doc> [--title <title>]
 归档（进回收站）页面，不删除；页面在 Web 回收站可恢复。
 
 ```
-pbot doc archive <doc> [-p <project>]
+pbot doc archive <doc> -p <project>
 ```
 
 ### pbot doc delete
@@ -824,7 +826,7 @@ pbot doc archive <doc> [-p <project>]
 删除页面。API 只允许删除已归档页面，因此本命令先归档（并回读确认归档生效）再删除。
 
 ```
-pbot doc delete <doc> [-p <project>]
+pbot doc delete <doc> -p <project>
 ```
 
 ---

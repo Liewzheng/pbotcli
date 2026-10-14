@@ -4,16 +4,16 @@ description: "Manage Plane.so through the pbot / pbotcli CLI — work items, pro
 allowed-tools: Bash(pbot *, pbotcli *)
 metadata:
   author: pbotcli maintainers
-  version: "1.5.1"
+  version: "1.5.2"
 ---
 
 # pbot — pbotcli
 
-> **Skill version: 1.5.1 — must match `pbot --version`.** A stale skill is
+> **Skill version: 1.5.2 — must match `pbot --version`.** A stale skill is
 > worse than no skill: every command and flag listed below may have been
 > added, renamed or removed since this was written. Before answering any
 > `pbot …` question, verify the version with `pbot --version`. If it differs
-> from `1.5.1`, this document is stale:
+> from `1.5.2`, this document is stale:
 >
 > - End users: `brew upgrade pbotcli` (or `brew install Liewzheng/tap/pbotcli`
 >   the first time), or the prebuilt installer from the Releases page, then
@@ -28,9 +28,10 @@ metadata:
 > `workspace.package.version`, so a synced copy should always exist on
 > `main`.
 
-**The command is `pbot`** (short alias of the full binary `pbotcli`) — two separate binaries
-built from the one `pbotcli-cli` package, installed from the Homebrew tap
-(`brew install Liewzheng/tap/pbotcli`), both running the same CLI. Every command group
+**The command is `pbot`.** The one `pbotcli-cli` package builds two binaries, `pbot` and
+`pbotcli`, from the same code; the Homebrew tap (`brew install Liewzheng/tap/pbotcli`) installs
+both and they behave identically, so this document uses the shorter name throughout — a `pbotcli`
+example is the same command. Every command group
 (whoami, configure, project, wi, comment, relations, attachment, doc, intake, label, state,
 module, cycle, user, cache), fuzzy resolution, `--json` dual output, caching, markdown input
 and inline images.
@@ -184,6 +185,8 @@ pbot state ls -p "Project" --group started --json
 pbot state create "In Review" -p "Project" --group started --color "#FFA500" --json
 
 # Documents
+# `-p` is required on every doc subcommand — the v1 API has no workspace-level
+# pages route, so omitting it is rejected locally (exit 5) with a hint naming -p.
 pbot doc ls -p "Project" --json
 pbot doc create --title "Spec" --content "Plain text, `code`, https://links" -p "Project" --json
 # --content is Markdown by default (headings/lists/code/links/images → HTML);

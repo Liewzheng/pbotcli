@@ -333,6 +333,109 @@ fn wi_update_self_parent_exits_5_without_writing() {
     any_patch.assert();
 }
 
+/// The PLANECLI-84 hijack shape: one item whose *title* contains the literal
+/// `DEMO-99`, an identifier that does not exist. Nothing resolves `DEMO-99` to
+/// that item — not the read path, and not the writes that share the resolver.
+const ITEMS_WITH_LOOKALIKE_TITLE: &str = r#"{"results":[{"id":"wi1","name":"see DEMO-99 for the fix","sequence_id":1,"project":"p1"}],"next_cursor":null,"next_page_results":false}"#;
+
+#[test]
+fn wi_show_missing_identifier_exits_3_instead_of_landing_on_a_title_match() {
+    let mut server = Server::new();
+    mock_project_reads(&mut server, ITEMS_WITH_LOOKALIKE_TITLE);
+
+    let out = run(
+        &[
+            "wi",
+            "show",
+            "DEMO-99",
+            "-p",
+            "Demo",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert_eq!(out.status.code(), Some(3));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("Work item not found: DEMO-99"), "{err}");
+    assert!(
+        !String::from_utf8_lossy(&out.stdout).contains("wi1"),
+        "must not print the item whose title merely contains the string"
+    );
+}
+
+#[test]
+fn wi_update_missing_identifier_exits_3_without_writing() {
+    let mut server = Server::new();
+    mock_project_reads(&mut server, ITEMS_WITH_LOOKALIKE_TITLE);
+    let mutating_patch = server
+        .mock("PATCH", mockito::Matcher::Any)
+        .with_status(500)
+        .expect(0)
+        .create();
+    let mutating_post = server
+        .mock("POST", mockito::Matcher::Any)
+        .with_status(500)
+        .expect(0)
+        .create();
+
+    let out = run(
+        &[
+            "wi",
+            "update",
+            "DEMO-99",
+            "-p",
+            "Demo",
+            "--name",
+            "renamed",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert_eq!(out.status.code(), Some(3));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("Work item not found: DEMO-99"), "{err}");
+    mutating_patch.assert();
+    mutating_post.assert();
+}
+
+#[test]
+fn wi_create_missing_parent_identifier_exits_3_without_writing() {
+    let mut server = Server::new();
+    mock_project_reads(&mut server, ITEMS_WITH_LOOKALIKE_TITLE);
+    let mutating_post = server
+        .mock("POST", mockito::Matcher::Any)
+        .with_status(500)
+        .expect(0)
+        .create();
+    let mutating_patch = server
+        .mock("PATCH", mockito::Matcher::Any)
+        .with_status(500)
+        .expect(0)
+        .create();
+
+    let out = run(
+        &[
+            "wi",
+            "create",
+            "a child",
+            "-p",
+            "Demo",
+            "--parent",
+            "DEMO-99",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert_eq!(out.status.code(), Some(3));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("Work item not found: DEMO-99"), "{err}");
+    mutating_post.assert();
+    mutating_patch.assert();
+}
+
 #[test]
 fn wi_show_lists_sub_issues() {
     let mut server = Server::new();
@@ -1176,4 +1279,78 @@ fn doc_show_without_project_hints_at_minus_p_on_workspace_404() {
     );
     workspace_page_get.assert();
     any_other.assert();
+}
+
+/// A `doc` command that cannot work without a project must be rejected locally:
+/// exit 5, a hint naming `-p`, and no HTTP request of any method at all. The
+/// server has no workspace-level pages route, so a request here could only ever
+/// come back 404.
+fn assert_doc_requires_project(args: &[&str]) {
+    let mut server = Server::new();
+    let mut negatives = vec![
+        server
+            .mock("GET", mockito::Matcher::Any)
+            .with_status(500)
+            .expect(0)
+            .create(),
+        server
+            .mock("POST", mockito::Matcher::Any)
+            .with_status(500)
+            .expect(0)
+            .create(),
+        server
+            .mock("PATCH", mockito::Matcher::Any)
+            .with_status(500)
+            .expect(0)
+            .create(),
+        server
+            .mock("DELETE", mockito::Matcher::Any)
+            .with_status(500)
+            .expect(0)
+            .create(),
+    ];
+
+    let mut full: Vec<&str> = args.to_vec();
+    full.extend_from_slice(&["--json", "--no-cache"]);
+    let out = run(&full, &server.url());
+    assert_eq!(
+        out.status.code(),
+        Some(5),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("Hint:"), "expected a hint line: {err}");
+    assert!(
+        err.contains("-p <project>"),
+        "expected the hint to name -p: {err}"
+    );
+    for mock in &mut negatives {
+        mock.assert();
+    }
+}
+
+#[test]
+fn doc_list_without_project_exits_5_without_a_request() {
+    assert_doc_requires_project(&["doc", "list"]);
+}
+
+#[test]
+fn doc_create_without_project_exits_5_without_a_request() {
+    assert_doc_requires_project(&["doc", "create", "--title", "Spec", "--content-raw", "body"]);
+}
+
+#[test]
+fn doc_update_without_project_exits_5_without_a_request() {
+    assert_doc_requires_project(&["doc", "update", "Spec", "--title", "New"]);
+}
+
+#[test]
+fn doc_archive_without_project_exits_5_without_a_request() {
+    assert_doc_requires_project(&["doc", "archive", "Spec"]);
+}
+
+#[test]
+fn doc_delete_without_project_exits_5_without_a_request() {
+    assert_doc_requires_project(&["doc", "delete", "Spec"]);
 }

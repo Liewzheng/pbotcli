@@ -13,6 +13,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `cargo install` / `make install` build of a checkout is a throwaway test build
   for exercising a branch — remove it with `cargo uninstall pbotcli-cli` when the
   branch is done, so the released `pbotcli` stays the only one on `PATH`.
+- `pbot doc` subcommands now require `-p/--project`. `list`, `create`, `update`,
+  `archive`, and `delete` are rejected locally with exit code 5 and a hint naming
+  the flag instead of sending a request to a workspace-level pages route the
+  server does not have; `show` keeps its existing behaviour of attempting the
+  lookup and turning the 404 into the same hint. The `--help` text and the
+  command reference now say so.
+- `make check` runs `cargo fmt --all -- --check` before clippy and the tests, so
+  the local gate covers all three checks CI runs; `make format-check` exposes
+  that check on its own. AGENTS.md and the CI header now state the two remaining
+  differences — CI's `--locked` flags and its macOS/Windows matrix — rather than
+  claiming a green local run always means a green CI run.
+- The review gate treats a report with zero or partial coverage as unreviewed
+  rather than as a pass, and names the real mechanism: `reng` skips
+  `CHANGELOG.md` and lockfiles, not Markdown.
+- AGENTS.md now warns that `gh pr edit --body-file` silently no-ops on this repo
+  (exit 0, nothing written) as well as that `gh pr view --comments` fails, and
+  gives the REST call that replaces it plus the re-read that confirms the write.
+- The skill's install notes point the soft-link example at the same checkout
+  path as the clone example, and its "the command is `pbot`" paragraph no longer
+  reads as if `pbot` were an alias of a differently-behaving `pbotcli` binary.
+
+### Fixed
+- A work-item identifier that matches nothing no longer resolves to a different
+  item: `pbot wi show ABC-99` used to return whichever work item happened to
+  carry that string in its title, and now reports `Work item not found` (exit
+  code 3). The write paths that share the resolver (`wi update`, `wi create
+  --parent`) reject the same reference without sending a mutating request.
+  Ordinary name queries keep resolving by substring and fuzzy match, unchanged.
+- `docs/rust-rewrite.md` no longer lists crates.io as a live install channel: the
+  crate is not published, and the released CLI comes from the Homebrew tap.
 
 ## [1.5.0] - 2026-10-13
 

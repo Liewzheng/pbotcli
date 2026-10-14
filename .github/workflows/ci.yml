@@ -1,8 +1,10 @@
 # CI: format, lint, and test every push to the long-lived branches and every
-# pull request. Mirrors the local `make check` gate (clippy -D warnings +
-# cargo test) so a green local run means a green CI run. Runs on all three
-# platforms cargo-dist ships for, since config paths and permission handling
-# are platform-sensitive.
+# pull request. The same three checks the local `make check` gate runs
+# (`cargo fmt --all -- --check`, clippy `-D warnings`, `cargo test`), with two
+# deliberate differences: every cargo command here passes `--locked`, so a
+# Cargo.toml change that never reached the committed Cargo.lock fails this job
+# instead of a developer's inner loop; and the matrix covers macOS and Windows
+# as well, since config paths and permission handling are platform-sensitive.
 name: CI
 
 on:

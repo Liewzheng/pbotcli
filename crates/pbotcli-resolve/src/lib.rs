@@ -194,6 +194,14 @@ pub struct LocatedWorkItem {
 /// title contains the literal `PLANE-3`). Pass 2 keeps the existing
 /// substring-then-fuzzy behaviour so callers relying on partial-name matching
 /// see no change.
+///
+/// An identifier query that misses in pass 1 is a miss, not a name to guess at:
+/// pass 2 is skipped entirely, so `PLANECLI-99` (an item that does not exist)
+/// reports NotFound instead of landing on whichever item happens to contain
+/// that string in its title or scores closest to it. "Identifier query" means
+/// `<known project identifier>-<digits>` — the prefix has to be one of the
+/// project identifiers being searched, so an ordinary hyphenated name query
+/// (`hotfix-2` in a workspace with no `hotfix` project) still resolves by name.
 fn match_work_item(
     query: &str,
     candidates: &[(pbotcli_types::WorkItem, &str)],
@@ -226,7 +234,13 @@ fn match_work_item(
         }
     }
     // Pass 2: substring-on-name (preserved from before the fix so existing
-    // callers' UX is unchanged) and fuzzy fallback.
+    // callers' UX is unchanged) and fuzzy fallback. An identifier-shaped query
+    // that reached this point already missed on the exact pass, so it gets
+    // neither: guessing a target for a reference the user spelled precisely is
+    // how a non-existent short number silently resolved to a different item.
+    if is_identifier_query(query, candidates) {
+        return None;
+    }
     for (item, identifier) in candidates {
         let name = item.name.as_deref().unwrap_or("");
         if !is_uuid(query) && name.to_lowercase().contains(&lower) {
@@ -242,6 +256,25 @@ fn match_work_item(
         return Some(make_located(item, identifier));
     }
     None
+}
+
+/// True when `query` references a work item the way a work-item identifier does
+/// — `<project identifier>-<sequence>` — and that prefix is one of the project
+/// identifiers in `candidates`. Purely numeric suffixes only: `ABC-1` is an
+/// identifier, `ABC-123abc` and `hotfix-2 rollout` are names.
+fn is_identifier_query(query: &str, candidates: &[(pbotcli_types::WorkItem, &str)]) -> bool {
+    if is_uuid(query) {
+        return false;
+    }
+    let Some((prefix, seq)) = query.rsplit_once('-') else {
+        return false;
+    };
+    if prefix.is_empty() || seq.is_empty() || !seq.bytes().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    candidates
+        .iter()
+        .any(|(_, identifier)| !identifier.is_empty() && identifier.eq_ignore_ascii_case(prefix))
 }
 
 /// Wrap a candidate `(item, project_identifier)` pair in a `LocatedWorkItem`,
@@ -477,5 +510,45 @@ mod tests {
         let wi56 = wi("i-56", "see PLANE-99 plans", 56);
         let candidates = cands(&[&wi56]);
         assert!(match_work_item("PLANE-999", &candidates).is_none());
+    }
+
+    fn cands_with<'a>(
+        items: &[&'a pbotcli_types::WorkItem],
+        identifier: &'a str,
+    ) -> Vec<(pbotcli_types::WorkItem, &'a str)> {
+        items.iter().map(|w| ((*w).clone(), identifier)).collect()
+    }
+
+    #[test]
+    fn absent_identifier_query_is_not_found_instead_of_hijacked_by_title() {
+        // The live PLANECLI-84 shape: PLANECLI-99 does not exist, and the item
+        // that documents the bug carries "PLANECLI-99" in its own title, so the
+        // substring pass handed back that unrelated item.
+        let wi84 = wi(
+            "i-84",
+            "fix: 不存在的短号被静默解析成别的条目（PLANECLI-99 → PLANECLI-10）",
+            84,
+        );
+        let candidates = cands_with(&[&wi84], "PLANECLI");
+        assert!(match_work_item("PLANECLI-99", &candidates).is_none());
+    }
+
+    #[test]
+    fn absent_identifier_query_is_not_found_instead_of_fuzzy_matched() {
+        // No substring either — the title spells the number without the dash, so
+        // only the rapidfuzz fallback could serve this query. It must not.
+        let wi = wi("i-84", "PLANECLI99 rollout", 84);
+        let candidates = cands_with(&[&wi], "PLANECLI");
+        assert!(match_work_item("PLANECLI-99", &candidates).is_none());
+    }
+
+    #[test]
+    fn name_query_with_a_non_identifier_prefix_still_resolves() {
+        // "hotfix" is not a project identifier, so a hyphenated name query keeps
+        // the substring/fuzzy fallback: only `<known identifier>-<digits>` is strict.
+        let wi = wi("i-hf", "hotfix-2 redeploy", 4);
+        let candidates = cands_with(&[&wi], "PLANE");
+        let m = match_work_item("hotfix-2", &candidates).expect("name fallback must still run");
+        assert_eq!(m.item.id, "i-hf");
     }
 }
