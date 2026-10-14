@@ -169,7 +169,20 @@ pub async fn resolve_user_query(
             service_principal: None,
         });
     }
-    let members = client.list_members().await?;
+    let members = match client.list_members().await {
+        Ok(members) => members,
+        // A UUID reference does not need the member list to be usable — the list
+        // only supplies the display name — so an unreadable list must not turn
+        // an explicit id into a failure. A name query, and `me` for a service
+        // principal, do need it and fail loudly (with `me`'s own hint, below).
+        Err(err) if is_uuid(query) && pbotcli_client::is_resource_access_denied(&err) => {
+            eprintln!(
+                "warning: could not read the workspace member list ({err}); using the id as the name"
+            );
+            return Ok(ResolvedUser::explicit(query, query));
+        }
+        Err(err) => return Err(err),
+    };
     if is_uuid(query) {
         if let Some(m) = members.iter().find(|m| m.id == query) {
             return Ok(ResolvedUser::explicit(&m.id, &m.full_name()));
@@ -231,6 +244,19 @@ impl ServicePrincipalSelf {
             id = self.member_id,
         )
     }
+
+    /// How a write made through `me` names its attribution: the principal, the
+    /// shadow bot member the payload carried, and that member's id. The single
+    /// source of this sentence, so `wi assign`, `wi create` and `wi update`
+    /// cannot drift apart.
+    pub fn attributed_write(&self) -> String {
+        format!(
+            "{label} as its shadow bot member '{member}' (member id {id})",
+            label = self.label,
+            member = self.member_name,
+            id = self.member_id,
+        )
+    }
 }
 
 impl ResolvedUser {
@@ -258,7 +284,38 @@ async fn resolve_service_principal_self(
     client: &PlaneClient,
 ) -> Result<ResolvedUser, PlaneError> {
     let sp_name = me.display_label();
-    let members = client.list_members().await?;
+    // A payload with no name cannot identify a shadow bot member, and "expected
+    // a member named 'svc- (bot)'" would be a riddle: say what is missing.
+    if sp_name.trim().is_empty() {
+        return Err(PlaneError::not_found_with_hint(
+            format!(
+                "Cannot resolve 'me': the service principal {id} answered /users/me/ without a \
+                 name, so its shadow bot workspace member cannot be identified.",
+                id = me.id,
+            ),
+            "Run 'pbot user ls' to list the workspace members, then pass --assignee with the \
+             member's name or UUID.",
+        ));
+    }
+    let members = match client.list_members().await {
+        Ok(members) => members,
+        // `me` under an SP is resolved through the member list, so a denial
+        // there cannot be answered by the SP's own id (it is not a member) and
+        // must not surface as a bare API error: say what was denied and what to
+        // run instead.
+        Err(err) if pbotcli_client::is_resource_access_denied(&err) => {
+            return Err(PlaneError::not_found_with_hint(
+                format!(
+                    "Cannot resolve 'me': {identity} is resolved through the workspace member \
+                     list, which this credential cannot read ({err}).",
+                    identity = me.identity_label(),
+                ),
+                "Run 'pbot user ls' to check what this credential can read, then pass --assignee \
+                 with an explicit member name or UUID.",
+            ));
+        }
+        Err(err) => return Err(err),
+    };
     match find_shadow_bot(&members, &sp_name) {
         Some(member) => Ok(ResolvedUser {
             id: member.id.clone(),
@@ -266,9 +323,11 @@ async fn resolve_service_principal_self(
             service_principal: Some(ServicePrincipalSelf {
                 label: me.identity_label(),
                 member_id: member.id.clone(),
-                // The server's composition rule, so the reader can find the row
-                // even when this deployment answered with an older shape.
-                member_name: format!("svc-{sp_name} (bot)"),
+                // The matched row's own name, so the caller can find it in
+                // `pbot user ls`; the server's composition rule is only the
+                // fallback for a row with no usable name.
+                member_name: member_display_name(member)
+                    .unwrap_or_else(|| format!("svc-{sp_name} (bot)")),
             }),
         }),
         None => Err(PlaneError::not_found_with_hint(
@@ -281,6 +340,40 @@ async fn resolve_service_principal_self(
             "Run 'pbot user ls' to list the workspace members, then pass --assignee with the \
              member's name or UUID.",
         )),
+    }
+}
+
+/// The name to show for a resolved member: its `display_name` when the row has
+/// one, else its full name. `None` when the row names itself nowhere.
+fn member_display_name(member: &pbotcli_types::Member) -> Option<String> {
+    member
+        .display_name
+        .clone()
+        .filter(|name| !name.trim().is_empty())
+        .or_else(|| {
+            let full = member.full_name();
+            (!full.trim().is_empty()).then_some(full)
+        })
+}
+
+/// Read one project's work items, answering `Ok(None)` when the credential may
+/// not read *that project* (HTTP 403 — what a service principal gets on every
+/// project it has no grant for — or 404).
+///
+/// The single skip decision shared by both cross-project scans
+/// ([`locate_work_item_across`] and the `wi ls` project loop), so they cannot
+/// drift apart. Only this call decides a skip: a denial on a project's secondary
+/// reads (states, labels, members) is a different failure and must not be
+/// reported as "no read access to this project". Anything that is not a
+/// per-resource denial propagates.
+pub async fn list_work_items_or_skip(
+    client: &PlaneClient,
+    project_id: &str,
+) -> Result<Option<Vec<pbotcli_types::WorkItem>>, PlaneError> {
+    match client.list_work_items(project_id).await {
+        Ok(items) => Ok(Some(items)),
+        Err(err) if pbotcli_client::is_resource_access_denied(&err) => Ok(None),
+        Err(err) => Err(err),
     }
 }
 
@@ -302,15 +395,28 @@ pub fn find_shadow_bot<'a>(
 }
 
 /// The body of the one-line warning a cross-project scan prints after skipping
-/// projects the credential cannot read; callers prefix it with `warning:` and
-/// the verb that fits (`searched` / `listed`). Built here so the work-item
-/// lookup and the `wi ls` listing cannot drift apart.
-pub fn skipped_projects_note(total: usize, skipped: &[String]) -> String {
+/// projects the credential cannot read; callers print it as
+/// `warning: {note}`. Built here so the work-item lookup and the `wi ls` listing
+/// cannot drift apart.
+///
+/// `verb` is the caller's own word for what it was doing (`searched` /
+/// `listed`). The wording adapts to what actually happened, so the advice is
+/// never nonsense: a scan that covered some projects suggests `-p` to target a
+/// readable one, a single explicit project says plainly that it is unreadable
+/// (advising `-p` to someone who already passed `-p` helps nobody), and a scan
+/// where *every* project was skipped says so instead of "0 of N".
+pub fn skipped_projects_note(verb: &str, total: usize, skipped: &[String]) -> String {
+    let denied = skipped.join(", ");
+    let scanned = total.saturating_sub(skipped.len());
+    if total == 1 {
+        return format!("no read access to {denied}");
+    }
+    if scanned == 0 {
+        return format!("{verb} none of {total} projects — no read access to {denied}");
+    }
     format!(
-        "{} of {} projects; no read access to {} — pass -p <project> to target one directly",
-        total.saturating_sub(skipped.len()),
-        total,
-        skipped.join(", ")
+        "{verb} {scanned} of {total} projects; no read access to {denied} — pass -p <project> to \
+         target one directly"
     )
 }
 
@@ -462,34 +568,29 @@ pub async fn locate_work_item_across(
     client: &PlaneClient,
 ) -> Result<LocatedWorkItem, PlaneError> {
     let projects = client.list_projects().await?;
-    let mut candidates: Vec<(pbotcli_types::WorkItem, String)> = Vec::new();
+    // Identifiers are borrowed from `projects`, which outlives the scan, so the
+    // candidate list is built without a per-item identifier clone and without a
+    // second cloned copy for matching.
+    let mut candidates: Vec<(pbotcli_types::WorkItem, &str)> = Vec::new();
     let mut skipped: Vec<String> = Vec::new();
     for (i, project) in projects.iter().enumerate() {
         if i > 0 {
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         }
-        let items = match client.list_work_items(&project.id).await {
-            Ok(items) => items,
-            Err(err) if pbotcli_client::is_resource_access_denied(&err) => {
-                skipped.push(project_label(project));
-                continue;
-            }
-            Err(err) => return Err(err),
+        let Some(items) = list_work_items_or_skip(client, &project.id).await? else {
+            skipped.push(project_label(project));
+            continue;
         };
-        let identifier = project.identifier.clone().unwrap_or_default();
-        candidates.extend(items.into_iter().map(|item| (item, identifier.clone())));
+        let identifier = project.identifier.as_deref().unwrap_or("");
+        candidates.extend(items.into_iter().map(|item| (item, identifier)));
     }
     if !skipped.is_empty() {
         eprintln!(
-            "warning: searched {}",
-            skipped_projects_note(projects.len(), &skipped)
+            "warning: {}",
+            skipped_projects_note("searched", projects.len(), &skipped)
         );
     }
-    let refs: Vec<(pbotcli_types::WorkItem, &str)> = candidates
-        .iter()
-        .map(|(i, s)| (i.clone(), s.as_str()))
-        .collect();
-    match match_work_item(query, &refs) {
+    match match_work_item(query, &candidates) {
         Some(found) => Ok(found),
         None if !skipped.is_empty() => Err(PlaneError::not_found_with_hint(
             format!("Work item not found: {query}"),

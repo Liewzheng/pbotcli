@@ -18,7 +18,7 @@ pbot [global flags] <command> [<subcommand>] [<argument>...] [flags]
 
 Every resource argument accepts a **name**, an **identifier** (`ABC-123`), or a **UUID**; close names resolve by fuzzy match (token-sort-ratio, threshold 60). The authenticated user can be referenced as `me` wherever an assignee is expected; under a service-principal token `me` resolves to that principal's **shadow bot workspace member** (see [pbot whoami](#pbot-whoami)).
 
-A lookup that spans projects (`wi show`, `wi ls` without `-p`) **skips** a project the credential cannot read — HTTP 403, which is what a service principal sees on every project it has no grant for, or 404 — and warns which projects were skipped, instead of failing the whole lookup on the first one. Any other failure (a rejected credential, a 5xx) still aborts the command; a `wi show` that then matches nothing lists the projects the search could not cover in its hint.
+A lookup that spans projects (`wi show`, `wi ls` without `-p`) **skips** a project the credential cannot read — HTTP 403, which is what a service principal sees on every project it has no grant for, or 404 — and warns which projects were skipped, instead of failing the whole lookup on the first one. Only the work-item read of a project decides that skip: a denial on the project's states or labels is a different failure and aborts the command rather than being reported as "no read access" to a project whose items were readable. Any other failure (a rejected credential, a 5xx) still aborts too; a `wi show` that then matches nothing lists the projects the search could not cover in its hint.
 
 Human-readable tables are written to **stderr**, machine-readable JSON to **stdout**, so `pbot ... --json 2>/dev/null` always yields clean JSON. Reads are cached on disk; writes invalidate the affected resource and, where the API can silently ignore a write (dates, triage, uploads), the result is verified by reading it back.
 
@@ -106,16 +106,25 @@ assigning it does nothing and filtering on it returns nothing. `me` never sends 
 Every service-principal `me` result says what it resolved to, so an unattended caller can act
 without reading the source:
 
-- `wi assign` / `wi create --assignee me` / `wi update --assignee me` report
-  `Work item assigned to <name> (service principal) as its shadow bot member 'svc-<name> (bot)' (member id <uuid>).`
+- Every write made with `--assignee me` — `wi assign`, `wi create`, `wi update` — prints, once the
+  write has landed,
+  `Work item assigned to <name> (service principal) as its shadow bot member '<member name>' (member id <uuid>).`
+  `<member name>` is the matched row's own name (what `pbot user ls` shows), so the member can be
+  found from the message.
 - `wi ls --assignee me` with no matching rows prints a note naming the principal, the shadow bot
   member and its id, and the next command to run (`pbot wi ls -p <project> --assignee '<member name or uuid>'`,
   members listed by `pbot user ls`).
 - When no shadow bot member exists, `me` fails (exit 3) with a hint naming `pbot user ls` instead of
   handing back an id that would be silently ignored.
+- If the workspace member list itself cannot be read, `wi ls --assignee` with a name or `me` fails
+  with the same kind of hint (the filter cannot be answered without it, and dropping the filter would
+  return rows nobody asked for), while an explicit member id still filters — there the list only
+  supplies the display name. A plain listing still runs either way: the member list is enrichment for
+  it, so the assignee column shows member ids instead of names and a warning says which call was
+  denied.
 
-A human credential's `me` output is unchanged: it resolves to the account's own member id and prints
-no identity note.
+A human credential's `me` output is unchanged: it resolves to the account's own member id, and an
+explicit name or UUID never prints an identity note.
 
 ## pbot configure
 

@@ -1910,15 +1910,26 @@ async fn cmd_wi_list(
     let workspace = client.workspace().to_string();
 
     // Member map (workspace-scoped) for assignee name resolution and filters.
-    let member_map: HashMap<String, String> = client
-        .list_members()
-        .await?
-        .into_iter()
-        .map(|m| {
-            let name = m.full_name();
-            (m.id, name)
-        })
-        .collect();
+    // Secondary enrichment (ADR-0006): a member list this credential cannot read
+    // shows ids in place of names instead of failing the listing, and says which
+    // call was denied so the substitution is not mistaken for "nobody".
+    let member_map: HashMap<String, String> = match client.list_members().await {
+        Ok(members) => members
+            .into_iter()
+            .map(|m| {
+                let name = m.full_name();
+                (m.id, name)
+            })
+            .collect(),
+        Err(err) if pbotcli_client::is_resource_access_denied(&err) => {
+            eprintln!(
+                "warning: could not read the workspace member list ({err}); assignee names will \
+                 show their ids — check access with `pbot user ls`"
+            );
+            HashMap::new()
+        }
+        Err(err) => return Err(err),
+    };
 
     let projects: Vec<Project> = match project {
         Some(q) => vec![resolve_project(q, client).await?],
@@ -1941,25 +1952,20 @@ async fn cmd_wi_list(
         // A project this credential cannot read is skipped, not fatal: without
         // `-p` the listing spans projects, and a service principal answers 403
         // on every project it has no grant for. Aborting there would hide the
-        // rows of the projects it *can* read. The guard covers the whole
-        // project-scoped load (items, states, labels) so a denial on any of
-        // them skips the project instead of half-rendering it; other failures
-        // still propagate.
-        let loaded = async {
-            let items = client.list_work_items(&project_id).await?;
-            let states = client.list_states(&project_id).await?;
-            let labels_list = client.list_labels(&project_id).await?;
-            Ok::<_, PlaneError>((items, states, labels_list))
-        }
-        .await;
-        let (items, states, labels_list) = match loaded {
-            Ok(loaded) => loaded,
-            Err(err) if pbotcli_client::is_resource_access_denied(&err) => {
-                skipped.push(pbotcli_resolve::project_label(proj));
-                continue;
-            }
-            Err(err) => return Err(err),
+        // rows of the projects it *can* read.
+        //
+        // Only the work-item read decides that skip. A denial on this project's
+        // secondary reads (states, labels) is a different failure and must not
+        // be reported as "no read access to this project" — that would hide
+        // items the credential can read behind a misleading warning — so those
+        // two propagate.
+        let Some(items) = pbotcli_resolve::list_work_items_or_skip(client, &project_id).await?
+        else {
+            skipped.push(pbotcli_resolve::project_label(proj));
+            continue;
         };
+        let states = client.list_states(&project_id).await?;
+        let labels_list = client.list_labels(&project_id).await?;
         let state_map: HashMap<String, String> = states
             .into_iter()
             .map(|s| (s.id, s.name.unwrap_or_default()))
@@ -1980,14 +1986,29 @@ async fn cmd_wi_list(
     }
     if !skipped.is_empty() {
         eprintln!(
-            "warning: listed {}",
-            pbotcli_resolve::skipped_projects_note(projects.len(), &skipped)
+            "warning: {}",
+            pbotcli_resolve::skipped_projects_note("listed", projects.len(), &skipped)
         );
     }
 
     // --assignee filter (by member id, exact)
     if let Some(q) = assignee {
-        let resolved = resolve_user_query(q, client).await?;
+        let resolved = match resolve_user_query(q, client).await {
+            Ok(resolved) => resolved,
+            // Resolving a name — and `me` under a service principal — reads the
+            // workspace member list. A denial there must not surface as a bare
+            // API error, and it must not be answered by dropping the filter
+            // (that would return rows the caller did not ask for): say what was
+            // denied and what to do instead.
+            Err(err) if pbotcli_client::is_resource_access_denied(&err) => {
+                return Err(PlaneError::not_found_with_hint(
+                    format!("Cannot filter by assignee '{q}': {err}"),
+                    "Run 'pbot user ls' to see the members this credential can read, or pass \
+                     --assignee with an explicit member id.",
+                ));
+            }
+            Err(err) => return Err(err),
+        };
         rows.retain(|(item, _)| work_item_has_assignee(item, &resolved.id));
         // Under a service principal `me` means the principal's shadow bot
         // member, which normally has nothing assigned. An empty list is then the
@@ -2615,8 +2636,13 @@ async fn cmd_wi_create(
     if opts.labels.is_some() {
         write.labels = Some(label_ids);
     }
+    // Set when `--assignee me` resolved through a service principal; printed
+    // once the write has landed, so the caller can see which identity the
+    // assignment was credited to.
+    let mut assignee_note: Option<String> = None;
     if let Some(assignee) = opts.assignee {
         let resolved = resolve_user_query(assignee, client).await?;
+        assignee_note = assignee_attribution_note(&resolved);
         write.assignees = Some(vec![resolved.id]);
     }
     if let Some(parent) = opts.parent {
@@ -2653,6 +2679,9 @@ async fn cmd_wi_create(
             .await?
     };
 
+    if let Some(note) = &assignee_note {
+        eprintln!("{note}");
+    }
     output_work_item_view(
         client,
         base_url,
@@ -2716,8 +2745,13 @@ async fn cmd_wi_update(
     if let Some(state) = state_id {
         write.state = Some(state);
     }
+    // Set when `--assignee me` resolved through a service principal; printed
+    // once the update has landed, so the caller can see which identity the
+    // assignment was credited to.
+    let mut assignee_note: Option<String> = None;
     if let Some(assignee) = opts.assignee {
         let resolved = resolve_user_query(assignee, client).await?;
+        assignee_note = assignee_attribution_note(&resolved);
         write.assignees = Some(vec![resolved.id]);
     }
     if opts.labels.is_some() || opts.clear_labels {
@@ -2761,6 +2795,9 @@ async fn cmd_wi_update(
         None => updated,
     };
 
+    if let Some(note) = &assignee_note {
+        eprintln!("{note}");
+    }
     output_work_item_view(
         client,
         base_url,
@@ -3866,18 +3903,9 @@ async fn cmd_wi_assign(
 ) -> Result<(), PlaneError> {
     let located = locate_issue(client, issue, project).await?;
     let resolved = resolve_user_query(assignee.unwrap_or("me"), client).await?;
-    // Report what the write was credited to. Under a service principal that is
-    // the principal's shadow bot member — say so, with the member name and id,
-    // so an unattended caller can audit the assignment from the output alone.
-    // A human credential and an explicit reference print exactly what they did
-    // before.
-    let assigned_to = match &resolved.service_principal {
-        Some(sp) => format!(
-            "{} as its shadow bot member '{}' (member id {})",
-            sp.label, sp.member_name, sp.member_id
-        ),
-        None => resolved.display().to_string(),
-    };
+    // Built before the id moves into the payload; printed once the write landed.
+    let note = assignee_attribution_note(&resolved)
+        .unwrap_or_else(|| format!("Work item assigned to {}.", resolved.display()));
     let write = WorkItemWrite {
         assignees: Some(vec![resolved.id]),
         ..Default::default()
@@ -3885,8 +3913,28 @@ async fn cmd_wi_assign(
     client
         .update_work_item(&located.project_id, &located.item.id, &write)
         .await?;
-    eprintln!("Work item assigned to {assigned_to}.");
+    // Report what the write was credited to. Under a service principal that is
+    // the principal's shadow bot member — say so, with the member name and id,
+    // so an unattended caller can audit the assignment from the output alone.
+    // A human credential and an explicit reference print exactly what they did
+    // before.
+    eprintln!("{note}");
     Ok(())
+}
+
+/// The sentence a write prints when `--assignee me` was credited to a service
+/// principal: the principal, the shadow bot member the payload carried, and that
+/// member's id. `None` for a human credential and for an explicit name/UUID —
+/// their output is unchanged, and an explicit reference has no `me` identity to
+/// report.
+///
+/// The single source of this wording for every `me` write (`wi assign`,
+/// `wi create`, `wi update`), so the three cannot drift apart.
+fn assignee_attribution_note(resolved: &pbotcli_resolve::ResolvedUser) -> Option<String> {
+    resolved
+        .service_principal
+        .as_ref()
+        .map(|sp| format!("Work item assigned to {}.", sp.attributed_write()))
 }
 
 async fn cmd_user_list(client: &PlaneClient, json: bool) -> Result<(), PlaneError> {

@@ -98,17 +98,17 @@ impl User {
     /// The owner's name, when the payload names one.
     ///
     /// Accepts an owner object (`display_name`, then `name`, then
-    /// `first_name last_name`) or a plain string. A UUID-shaped string is an
-    /// *id*, not a name — the payload does not name the owner, so this returns
-    /// `None` and `identity_label` degrades to the plain marker rather than
-    /// claiming "owned by 17af336a-…". An email address is not taken as a name
-    /// either: the owner's profile is not what `whoami` is for, and the raw
+    /// `first_name last_name`) or a plain string. An id and an address are both
+    /// rejected: a UUID-shaped string is an *id*, not a name, and an
+    /// `@`-shaped string is an email, which `whoami` does not print. Either way
+    /// this returns `None` and `identity_label` degrades to the plain marker
+    /// rather than claiming "owned by 17af336a-…" or "owned by j@x", and the raw
     /// payload stays available in `--json`.
     pub fn owner_label(&self) -> Option<String> {
         let owner = self.owner.as_ref()?;
         if let Some(raw) = owner.as_str() {
             let trimmed = raw.trim();
-            if trimmed.is_empty() || is_uuid(trimmed) {
+            if trimmed.is_empty() || is_uuid(trimmed) || is_email(trimmed) {
                 return None;
             }
             return Some(trimmed.to_string());
@@ -118,19 +118,24 @@ impl User {
             obj.get(*key)
                 .and_then(|v| v.as_str())
                 .map(str::trim)
-                .filter(|s| !s.is_empty() && !is_uuid(s))
+                .filter(|s| !s.is_empty() && !is_uuid(s) && !is_email(s))
         });
         if let Some(name) = keyed {
             return Some(name.to_string());
         }
-        let joined = ["first_name", "last_name"]
+        // A pair names the human only if neither half is an id or an address:
+        // half a name invented from a payload that mixes an address into a name
+        // field would be worse than the plain marker.
+        let parts: Vec<&str> = ["first_name", "last_name"]
             .iter()
             .filter_map(|key| obj.get(*key).and_then(|v| v.as_str()))
             .map(str::trim)
-            .filter(|s| !s.is_empty() && !is_uuid(s))
-            .collect::<Vec<_>>()
-            .join(" ");
-        (!joined.is_empty()).then_some(joined)
+            .filter(|s| !s.is_empty())
+            .collect();
+        if parts.is_empty() || parts.iter().any(|s| is_uuid(s) || is_email(s)) {
+            return None;
+        }
+        Some(parts.join(" "))
     }
 
     /// True when the server sent at least one person field.
@@ -157,6 +162,16 @@ pub fn is_uuid(s: &str) -> bool {
             .iter()
             .zip(LENGTHS)
             .all(|(part, len)| part.len() == len && part.chars().all(|c| c.is_ascii_hexdigit()))
+}
+
+/// Whether a string is an email address rather than a name: an `@` with
+/// something either side of it. Deliberately coarse — the check only has to
+/// keep an address out of a displayed name, not validate one.
+fn is_email(s: &str) -> bool {
+    match s.split_once('@') {
+        Some((local, domain)) => !local.is_empty() && !domain.is_empty(),
+        None => false,
+    }
 }
 
 /// A member row of `/api/v1/workspaces/{ws}/members/`.
@@ -758,6 +773,39 @@ mod tests {
         );
         assert_eq!(sp.owner_label(), None);
         assert_eq!(sp.identity_label(), "kimicode-bot (service principal)");
+        // ... in the object's name fields too.
+        for owner in [
+            r#"{"name":"j@x"}"#,
+            r#"{"display_name":"j@x"}"#,
+            r#"{"first_name":"j@x","last_name":"y@x"}"#,
+        ] {
+            let sp = user(&format!(
+                r#"{{"id":"sp1","name":"kimicode-bot","type":"service_principal","owner":{owner}}}"#
+            ));
+            assert_eq!(sp.owner_label(), None, "owner {owner} must not name anyone");
+            assert_eq!(sp.identity_label(), "kimicode-bot (service principal)");
+        }
+        // An address among the name parts invalidates the pair rather than
+        // contributing half a name: the marker degrades, nothing is invented.
+        let sp = user(
+            r#"{"id":"sp1","name":"kimicode-bot","type":"service_principal","owner":{"first_name":"j@x","last_name":"Liu"}}"#,
+        );
+        assert_eq!(sp.owner_label(), None);
+        // ... and in the string form, `owner` and its `owner_name` alias alike.
+        for key in ["owner", "owner_name"] {
+            let sp = user(&format!(
+                r#"{{"id":"sp1","name":"kimicode-bot","type":"service_principal","{key}":"j@x"}}"#
+            ));
+            assert_eq!(sp.owner_label(), None, "{key} must not name anyone");
+            assert_eq!(sp.identity_label(), "kimicode-bot (service principal)");
+        }
+        // Any `@`-bearing string is treated as an address and rejected: the
+        // degradation is safe (the plain marker), and a name is never invented
+        // from something that looks like an address.
+        let sp = user(
+            r#"{"id":"sp1","name":"kimicode-bot","type":"service_principal","owner":"Jicai @ Islet"}"#,
+        );
+        assert_eq!(sp.owner_label(), None);
     }
 
     #[test]

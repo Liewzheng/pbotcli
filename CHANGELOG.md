@@ -43,9 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - A cross-project lookup (`pbot wi show`, `pbot wi ls` without `-p`) no longer
   fails on the first project the credential cannot read: a project that answers
   403 — what a service principal gets on every project it has no grant for — or
-  404 is skipped, with a warning naming what was left out. A `wi show` that
-  then matches nothing lists the skipped projects in its hint. Failures that
-  are not a per-project denial still abort.
+  404 is skipped, with a warning naming what was left out. Only a project's
+  work-item read decides that skip: a denial on its states or labels still
+  aborts, rather than hiding readable items behind a "no read access" warning. A
+  `wi show` that then matches nothing lists the skipped projects in its hint.
+  Failures that are not a per-project denial still abort.
 - The skill's member-listing example now spells the command correctly
   (`pbot user ls`): `pbot users ls` was never a valid subcommand.
 
@@ -63,8 +65,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   silently ignored, and `wi ls --assignee me` used to return an empty list. When
   no such member exists the command fails with a hint naming `pbot user ls`
   instead of resolving to nothing, and a service-principal `me` result reports
-  what it resolved to — member name and UUID — with the next command to run when
-  the filter finds nothing. A human credential's `me` output is unchanged.
+  what it resolved to — the member's own name and its UUID — on every write and
+  whenever the filter finds nothing. If the workspace member list is unreadable,
+  `wi ls --assignee` fails with a hint while a plain listing still runs with ids
+  in place of assignee names and a warning naming the denied call. A human
+  credential's `me` output is unchanged, and an explicit name or UUID prints no
+  identity note.
 - `docs/rust-rewrite.md` no longer lists crates.io as a live install channel: the
   crate is not published, and the released CLI comes from the Homebrew tap.
 

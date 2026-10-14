@@ -1492,6 +1492,10 @@ const NO_ITEMS: &str = r#"{"results":[],"next_cursor":null,"next_page_results":f
 /// filters this row out, which is the bug: `--assignee me` matched nothing.
 const ITEMS_ASSIGNED_TO_THE_SHADOW_BOT: &str = r#"{"results":[{"id":"wi1","name":"A task","sequence_id":1,"priority":"high","state":"s1","labels":["l1"],"assignees":["u-shadow"],"project":"p1","created_at":"2026-01-02T00:00:00Z","updated_at":"2026-01-02T00:00:00Z"}],"next_cursor":null,"next_page_results":false}"#;
 
+/// The same row, assigned to a member id given in UUID form (for the paths that
+/// take an explicit id rather than `me`).
+const ITEMS_ASSIGNED_TO_A_UUID: &str = r#"{"results":[{"id":"wi1","name":"A task","sequence_id":1,"priority":"high","state":"s1","labels":["l1"],"assignees":["17af336a-126d-4f0f-a067-25e7d90a2d78"],"project":"p1","created_at":"2026-01-02T00:00:00Z","updated_at":"2026-01-02T00:00:00Z"}],"next_cursor":null,"next_page_results":false}"#;
+
 /// The member list for an SP credential: the human members plus the shadow bot
 /// user the server composes for the SP (`svc-<name> (bot)` / `svc-<name>`).
 const MEMBERS_WITH_SHADOW_BOT: &str = r#"[
@@ -2062,4 +2066,694 @@ fn wi_ls_assignee_me_empty_result_says_what_it_resolved_to_and_what_to_run() {
     // what to run next
     assert!(err.contains("pbot wi ls -p <project> --assignee"), "{err}");
     assert!(err.contains("pbot user ls"), "{err}");
+}
+
+// ---------------------------------------------------------------------------
+// Round 3: the identity note on every `me` write, the row's own member name,
+// the guard's real scope, and the member-list degradation.
+// ---------------------------------------------------------------------------
+
+/// The SP credential plus a member list holding its shadow bot row.
+fn mock_sp_credential(server: &mut Server) {
+    mock_list(
+        server,
+        "/api/v1/workspaces/ws/members/",
+        MEMBERS_WITH_SHADOW_BOT,
+    );
+    mock_me(server, ME_SERVICE_PRINCIPAL);
+}
+
+/// The project reads for one project, with the SP credential's member list (its
+/// shadow bot row) and `/users/me/` — the whole setup a `me` write needs.
+///
+/// Built here rather than layered on [`mock_project_reads`] because mockito
+/// serves the *first* mock that matches a path: a second `/members/` mock would
+/// never be reached, and the shadow bot row would be invisible.
+fn mock_sp_project_reads(server: &mut Server, items: &str) {
+    mock_list(server, "/api/v1/workspaces/ws/projects/", PROJECTS);
+    mock_list(server, "/api/v1/workspaces/ws/projects/p1/", PROJECT);
+    mock_list(
+        server,
+        "/api/v1/workspaces/ws/projects/p1/work-items/",
+        items,
+    );
+    mock_list(server, "/api/v1/workspaces/ws/projects/p1/states/", STATES);
+    mock_list(server, "/api/v1/workspaces/ws/projects/p1/labels/", LABELS);
+    mock_sp_credential(server);
+}
+
+#[test]
+fn wi_create_assignee_me_under_a_service_principal_prints_the_identity_note() {
+    let mut server = Server::new();
+    mock_sp_project_reads(&mut server, ITEMS);
+    // The write must carry the shadow bot's member id, not the SP's id.
+    server
+        .mock("POST", "/api/v1/workspaces/ws/projects/p1/work-items/")
+        .match_body(Matcher::PartialJson(
+            serde_json::json!({"assignees": ["u-shadow"]}),
+        ))
+        .with_status(201)
+        .with_header("content-type", "application/json")
+        .with_body(ITEM)
+        .expect(1)
+        .create();
+
+    let out = run(
+        &[
+            "wi",
+            "create",
+            "New task",
+            "-p",
+            "Demo",
+            "--assignee",
+            "me",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains(
+            "Work item assigned to kimicode-bot (service principal) as its shadow bot member \
+             'svc-kimicode-bot (bot)' (member id u-shadow)."
+        ),
+        "{err}"
+    );
+}
+
+#[test]
+fn wi_create_assignee_explicit_name_prints_no_identity_note() {
+    let mut server = Server::new();
+    mock_sp_project_reads(&mut server, ITEMS);
+    server
+        .mock("POST", "/api/v1/workspaces/ws/projects/p1/work-items/")
+        .with_status(201)
+        .with_header("content-type", "application/json")
+        .with_body(ITEM)
+        .expect(1)
+        .create();
+
+    let out = run(
+        &[
+            "wi",
+            "create",
+            "New task",
+            "-p",
+            "Demo",
+            "--assignee",
+            "e25ef580-126d-4f0f-a067-25e7d90a2d78",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    // An explicit member id is not `me`: no identity note, no service-principal
+    // wording anywhere in the output.
+    assert!(!err.contains("Work item assigned to"), "{err}");
+    assert!(!err.contains("service principal"), "{err}");
+}
+
+#[test]
+fn wi_update_assignee_me_under_a_service_principal_prints_the_identity_note() {
+    let mut server = Server::new();
+    mock_sp_project_reads(&mut server, ITEMS);
+    server
+        .mock("PATCH", "/api/v1/workspaces/ws/projects/p1/work-items/wi1")
+        .match_body(Matcher::PartialJson(
+            serde_json::json!({"assignees": ["u-shadow"]}),
+        ))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(ITEM)
+        .expect(1)
+        .create();
+
+    let out = run(
+        &[
+            "wi",
+            "update",
+            "DEMO-1",
+            "-p",
+            "Demo",
+            "--assignee",
+            "me",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains(
+            "Work item assigned to kimicode-bot (service principal) as its shadow bot member \
+             'svc-kimicode-bot (bot)' (member id u-shadow)."
+        ),
+        "{err}"
+    );
+}
+
+#[test]
+fn wi_update_assignee_explicit_name_prints_no_identity_note() {
+    let mut server = Server::new();
+    mock_sp_project_reads(&mut server, ITEMS);
+    server
+        .mock("PATCH", "/api/v1/workspaces/ws/projects/p1/work-items/wi1")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(ITEM)
+        .expect(1)
+        .create();
+
+    let out = run(
+        &[
+            "wi",
+            "update",
+            "DEMO-1",
+            "-p",
+            "Demo",
+            "--assignee",
+            "e25ef580-126d-4f0f-a067-25e7d90a2d78",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!err.contains("Work item assigned to"), "{err}");
+    assert!(!err.contains("service principal"), "{err}");
+}
+
+#[test]
+fn wi_assign_explicit_name_prints_no_identity_note() {
+    let mut server = Server::new();
+    mock_sp_project_reads(&mut server, ITEMS);
+    server
+        .mock("PATCH", "/api/v1/workspaces/ws/projects/p1/work-items/wi1")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(ITEM)
+        .expect(1)
+        .create();
+
+    let out = run(
+        &[
+            "wi",
+            "assign",
+            "DEMO-1",
+            "-p",
+            "Demo",
+            "--assignee",
+            "e25ef580-126d-4f0f-a067-25e7d90a2d78",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    // The pre-existing line, unchanged for an explicit reference.
+    assert!(err.contains("Work item assigned to "), "{err}");
+    assert!(!err.contains("service principal"), "{err}");
+    assert!(!err.contains("shadow bot"), "{err}");
+}
+
+#[test]
+fn assignee_me_note_uses_the_matched_member_rows_own_name() {
+    // The row's `display_name` is what `pbot user ls` shows, so the note must
+    // quote it rather than a name re-derived from the principal — here the row's
+    // name differs from the server's composition, and `first_name` is what
+    // carries the bot marker.
+    let mut server = Server::new();
+    mock_list(&mut server, "/api/v1/workspaces/ws/projects/", PROJECTS);
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/work-items/",
+        ITEMS,
+    );
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/states/",
+        STATES,
+    );
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/labels/",
+        LABELS,
+    );
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/members/",
+        r#"[{"id":"u-shadow","display_name":"Kimicode bot (legacy)","first_name":"svc-kimicode-bot","last_name":"Bot"}]"#,
+    );
+    mock_me(&mut server, ME_SERVICE_PRINCIPAL);
+
+    let out = run(
+        &[
+            "wi",
+            "ls",
+            "-p",
+            "Demo",
+            "--assignee",
+            "me",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("'Kimicode bot (legacy)' (member id u-shadow)"),
+        "the row's own name must be quoted: {err}"
+    );
+    assert!(
+        !err.contains("svc-kimicode-bot (bot)"),
+        "the composed name must not replace the row's name: {err}"
+    );
+}
+
+#[test]
+fn wi_ls_without_project_assignee_me_skips_a_denied_project() {
+    // The cross-project skip and the `me` filter together: the denied project
+    // must not hide the readable one's row for the shadow bot member.
+    let mut server = Server::new();
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/",
+        PROJECTS_ONE_UNREADABLE,
+    );
+    server
+        .mock("GET", "/api/v1/workspaces/ws/projects/p-locked/work-items/")
+        .match_query(Matcher::Any)
+        .with_status(403)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"detail":"no active grant"}"#)
+        .create();
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/work-items/",
+        ITEMS_ASSIGNED_TO_THE_SHADOW_BOT,
+    );
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/states/",
+        STATES,
+    );
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/labels/",
+        LABELS,
+    );
+    mock_sp_credential(&mut server);
+
+    let out = run(
+        &["wi", "ls", "--assignee", "me", "--json", "--no-cache"],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout_of(&out)).expect("valid JSON");
+    let rows = parsed.as_array().expect("an array of work items");
+    assert_eq!(rows.len(), 1, "the readable project's row must survive");
+    assert_eq!(rows[0]["sequence_id"], "DEMO-1");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("Locked"), "skipped project unnamed: {err}");
+}
+
+#[test]
+fn wi_ls_states_denial_is_not_reported_as_a_project_skip() {
+    // Only the work-item read decides a skip. A project whose items are readable
+    // but whose states are not must fail loudly instead of being dropped from
+    // the listing behind a "no read access" warning.
+    let mut server = Server::new();
+    mock_list(&mut server, "/api/v1/workspaces/ws/projects/", PROJECTS);
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/work-items/",
+        ITEMS,
+    );
+    server
+        .mock("GET", "/api/v1/workspaces/ws/projects/p1/states/")
+        .match_query(Matcher::Any)
+        .with_status(404)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"detail":"Not found."}"#)
+        .create();
+    mock_list(&mut server, "/api/v1/workspaces/ws/members/", MEMBERS);
+
+    let out = run(
+        &["wi", "ls", "-p", "Demo", "--json", "--no-cache"],
+        &server.url(),
+    );
+    assert_eq!(out.status.code(), Some(3));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !err.contains("no read access"),
+        "a states failure must not be reported as a project denial: {err}"
+    );
+    assert!(String::from_utf8_lossy(&out.stdout).is_empty(), "{err}");
+}
+
+#[test]
+fn wi_ls_degrades_the_assignee_names_when_the_member_list_is_denied() {
+    // Secondary enrichment (ADR-0006): an unreadable member list blanks the
+    // assignee names, names the call that was denied, and still lists the items.
+    let mut server = Server::new();
+    mock_list(&mut server, "/api/v1/workspaces/ws/projects/", PROJECTS);
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/work-items/",
+        ITEMS,
+    );
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/states/",
+        STATES,
+    );
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/labels/",
+        LABELS,
+    );
+    server
+        .mock("GET", "/api/v1/workspaces/ws/members/")
+        .match_query(Matcher::Any)
+        .with_status(403)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"detail":"no active grant"}"#)
+        .create();
+
+    let out = run(
+        &["wi", "ls", "-p", "Demo", "--json", "--no-cache"],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout_of(&out)).expect("valid JSON");
+    assert_eq!(parsed.as_array().map(Vec::len), Some(1));
+    // No member map to resolve through: the id stands in for the name (the
+    // pre-existing fallback), which the warning has to describe truthfully.
+    assert_eq!(parsed[0]["assignee_names"], "u1");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("could not read the workspace member list"),
+        "{err}"
+    );
+    assert!(err.contains("assignee names will show their ids"), "{err}");
+    assert!(err.contains("pbot user ls"), "{err}");
+    assert!(!err.contains("no read access to"), "{err}");
+}
+
+#[test]
+fn wi_ls_assignee_me_hints_when_the_member_list_is_denied() {
+    // The filter cannot be answered without the member list, and dropping it
+    // would return rows the caller did not ask for: the failure carries the next
+    // command instead of the bare API error.
+    let mut server = Server::new();
+    mock_list(&mut server, "/api/v1/workspaces/ws/projects/", PROJECTS);
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/work-items/",
+        ITEMS,
+    );
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/states/",
+        STATES,
+    );
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/labels/",
+        LABELS,
+    );
+    server
+        .mock("GET", "/api/v1/workspaces/ws/members/")
+        .match_query(Matcher::Any)
+        .with_status(403)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"detail":"no active grant"}"#)
+        .create();
+    mock_me(&mut server, ME_SERVICE_PRINCIPAL);
+
+    let out = run(
+        &[
+            "wi",
+            "ls",
+            "-p",
+            "Demo",
+            "--assignee",
+            "me",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert_eq!(out.status.code(), Some(3));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("Cannot filter by assignee 'me'"), "{err}");
+    assert!(err.contains("pbot user ls"), "{err}");
+    assert!(String::from_utf8_lossy(&out.stdout).is_empty(), "{err}");
+}
+
+// ---------------------------------------------------------------------------
+// Round 3 (cont.): truthful skip-warning shapes, and the id-reference path when
+// the member list is unreadable.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn wi_ls_single_project_denial_does_not_advise_the_flag_that_was_used() {
+    // `-p Demo` already targeted one project: the warning must not tell the
+    // caller to "pass -p" again.
+    let mut server = Server::new();
+    mock_list(&mut server, "/api/v1/workspaces/ws/projects/", PROJECTS);
+    server
+        .mock("GET", "/api/v1/workspaces/ws/projects/p1/work-items/")
+        .match_query(Matcher::Any)
+        .with_status(403)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"detail":"no active grant"}"#)
+        .create();
+    mock_list(&mut server, "/api/v1/workspaces/ws/members/", MEMBERS);
+
+    let out = run(
+        &["wi", "ls", "-p", "Demo", "--json", "--no-cache"],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("no read access to Demo"), "{err}");
+    assert!(!err.contains("pass -p"), "{err}");
+    assert!(!err.contains("of 1 projects"), "{err}");
+}
+
+#[test]
+fn wi_ls_all_projects_skipped_says_so() {
+    // Every project denied: "0 of 2 projects" would be a strange way to say it.
+    let mut server = Server::new();
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/",
+        PROJECTS_ONE_UNREADABLE,
+    );
+    for path in [
+        "/api/v1/workspaces/ws/projects/p-locked/work-items/",
+        "/api/v1/workspaces/ws/projects/p1/work-items/",
+    ] {
+        server
+            .mock("GET", path)
+            .match_query(Matcher::Any)
+            .with_status(403)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"detail":"no active grant"}"#)
+            .create();
+    }
+    mock_list(&mut server, "/api/v1/workspaces/ws/members/", MEMBERS);
+
+    let out = run(&["wi", "ls", "--json", "--no-cache"], &server.url());
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(stdout_of(&out).trim(), "[]");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("listed none of 2 projects"), "{err}");
+    assert!(err.contains("Locked") && err.contains("Demo"), "{err}");
+}
+
+#[test]
+fn assignee_me_with_a_nameless_principal_says_what_is_missing() {
+    // An SP payload with no `name` cannot identify a shadow bot member; the
+    // error must say so instead of quoting a member name built from nothing.
+    let mut server = Server::new();
+    mock_list(&mut server, "/api/v1/workspaces/ws/projects/", PROJECTS);
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/work-items/",
+        ITEMS,
+    );
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/states/",
+        STATES,
+    );
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/labels/",
+        LABELS,
+    );
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/members/",
+        MEMBERS_WITH_SHADOW_BOT,
+    );
+    mock_me(&mut server, r#"{"id":"sp1","type":"service_principal"}"#);
+
+    let out = run(
+        &[
+            "wi",
+            "ls",
+            "-p",
+            "Demo",
+            "--assignee",
+            "me",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert_eq!(out.status.code(), Some(3));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("answered /users/me/ without a name"), "{err}");
+    assert!(err.contains("sp1"), "{err}");
+    assert!(err.contains("pbot user ls"), "{err}");
+    assert!(String::from_utf8_lossy(&out.stdout).is_empty(), "{err}");
+}
+
+#[test]
+fn wi_ls_assignee_me_prints_no_note_when_the_member_has_rows() {
+    // The empty-result note is for an empty result: a filter that matched must
+    // stay quiet, or the note would contradict the output.
+    let mut server = Server::new();
+    mock_sp_project_reads(&mut server, ITEMS_ASSIGNED_TO_THE_SHADOW_BOT);
+
+    let out = run(
+        &[
+            "wi",
+            "ls",
+            "-p",
+            "Demo",
+            "--assignee",
+            "me",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout_of(&out)).expect("valid JSON");
+    assert_eq!(parsed.as_array().map(Vec::len), Some(1));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!err.contains("note:"), "{err}");
+}
+
+#[test]
+fn wi_ls_assignee_with_an_id_degrades_when_the_member_list_is_denied() {
+    // An explicit id needs no member list to be usable: an unreadable list costs
+    // the display name, not the filter.
+    let mut server = Server::new();
+    mock_list(&mut server, "/api/v1/workspaces/ws/projects/", PROJECTS);
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/work-items/",
+        ITEMS_ASSIGNED_TO_A_UUID,
+    );
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/states/",
+        STATES,
+    );
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/labels/",
+        LABELS,
+    );
+    server
+        .mock("GET", "/api/v1/workspaces/ws/members/")
+        .match_query(Matcher::Any)
+        .with_status(403)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"detail":"no active grant"}"#)
+        .create();
+
+    let out = run(
+        &[
+            "wi",
+            "ls",
+            "-p",
+            "Demo",
+            "--assignee",
+            "17af336a-126d-4f0f-a067-25e7d90a2d78",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout_of(&out)).expect("valid JSON");
+    let rows = parsed.as_array().expect("an array of work items");
+    assert_eq!(rows.len(), 1, "the id filter must still run");
+    assert_eq!(rows[0]["sequence_id"], "DEMO-1");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("could not read the workspace member list"),
+        "{err}"
+    );
 }
