@@ -413,9 +413,18 @@ project flag (`intake_enabled`).
 ## Users
 
 ```
-pbot users ls        # List workspace members
+pbot user ls         # List workspace members
 pbot whoami          # Show authenticated user
 ```
+
+`whoami`'s `name` row marks the credential kind: a human prints its plain name, a service
+principal prints `<name> (service principal)` (or `<name> (SP owned by <owner>)` when the
+`/users/me/` payload names the owner, which the API does not send today).
+
+Under a service-principal token `me` means that principal's **shadow bot workspace member**
+(`svc-<name> (bot)`, the user Plane credits its writes to) — not the principal id `whoami`
+prints, which is not a member and would silently assign nobody. If no such member exists,
+`me` fails with a hint naming `pbot user ls` instead of returning an empty result.
 
 ## Cache
 

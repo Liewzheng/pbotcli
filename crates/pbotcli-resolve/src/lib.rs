@@ -54,16 +54,11 @@ where
 }
 
 /// True when `s` looks like a UUID (8-4-4-4-12 hex).
+///
+/// Delegates to the canonical check in `pbotcli-types` (which the identity
+/// helpers there also use) so the shape is defined in exactly one place.
 pub fn is_uuid(s: &str) -> bool {
-    let parts: Vec<&str> = s.split('-').collect();
-    if parts.len() != 5 {
-        return false;
-    }
-    let lengths = [8usize, 4, 4, 4, 12];
-    parts
-        .iter()
-        .zip(lengths)
-        .all(|(part, len)| part.len() == len && part.chars().all(|c| c.is_ascii_hexdigit()))
+    pbotcli_types::is_uuid(s)
 }
 
 /// How a project query was matched: exact identifier, exact name, or fuzzy name.
@@ -135,26 +130,52 @@ pub async fn resolve_project(query: &str, client: &PlaneClient) -> Result<Projec
 /// Resolve a user reference to an (id, display name) pair: `me` resolves to
 /// the authenticated user, a UUID is accepted as-is, otherwise the query is
 /// fuzzy-matched against workspace member names.
+///
+/// # `me` under a service principal
+///
+/// A service-principal credential has **two** identities, and they are not
+/// interchangeable:
+///
+/// * `ServicePrincipal.id` — what `/api/v1/users/me/` answers with, what
+///   `whoami` prints, and what an API key authenticates as. It is *not* a
+///   member: no `WorkspaceMember` row carries it, so putting it in an
+///   assignment payload silently assigns nobody and filtering on it returns an
+///   empty list.
+/// * the **shadow bot** `User` — the row Plane credits every SP write to
+///   (`service_principals/attribution.py`; `display_name` `svc-<name> (bot)`,
+///   `first_name` `svc-<name>`). It is the member id an assignment must carry.
+///
+/// `me` therefore resolves to the shadow bot member for an SP, and to the
+/// credential's own id for a human (unchanged). When the shadow bot cannot be
+/// found the call fails with a hint naming the next command instead of
+/// returning an id that would do nothing.
 pub async fn resolve_user_query(
     query: &str,
     client: &PlaneClient,
-) -> Result<(String, String), PlaneError> {
+) -> Result<ResolvedUser, PlaneError> {
     if query.eq_ignore_ascii_case("me") {
         let me = client.get_me().await?;
+        if me.is_service_principal() {
+            return resolve_service_principal_self(&me, client).await;
+        }
         let name = me
             .display_name
             .clone()
             .or_else(|| me.first_name.clone())
             .unwrap_or_default();
-        return Ok((me.id, name));
+        return Ok(ResolvedUser {
+            id: me.id,
+            name,
+            identity: None,
+        });
     }
     let members = client.list_members().await?;
     if is_uuid(query) {
         if let Some(m) = members.iter().find(|m| m.id == query) {
-            return Ok((m.id.clone(), m.full_name()));
+            return Ok(ResolvedUser::explicit(&m.id, &m.full_name()));
         }
         // Not present in the member list: accept the UUID as-is.
-        return Ok((query.to_string(), query.to_string()));
+        return Ok(ResolvedUser::explicit(query, query));
     }
     let with_names: Vec<(pbotcli_types::Member, String)> = members
         .into_iter()
@@ -164,12 +185,99 @@ pub async fn resolve_user_query(
         })
         .collect();
     if let Some(m) = find_best_match(query, &with_names, |(_, name)| name.as_str()) {
-        return Ok((m.item.0.id.clone(), m.item.1.clone()));
+        return Ok(ResolvedUser::explicit(&m.item.0.id, &m.item.1));
     }
     Err(PlaneError::NotFound {
         message: format!("User not found: {query}"),
         hint: None,
     })
+}
+
+/// A resolved user reference.
+#[derive(Debug, Clone)]
+pub struct ResolvedUser {
+    /// The id to put in an API payload (a workspace member id).
+    pub id: String,
+    /// The name to show for the resolved member.
+    pub name: String,
+    /// The credential's own identity label, set only when `me` resolved through
+    /// a service principal — `Kimicode … (service principal)`, or `… (SP owned
+    /// by <owner>)` when the payload names the owner. Callers use it to say
+    /// which identity a write was credited to; it stays `None` for a human
+    /// credential, whose messages are unchanged.
+    pub identity: Option<String>,
+}
+
+impl ResolvedUser {
+    fn explicit(id: &str, name: &str) -> Self {
+        Self {
+            id: id.to_string(),
+            name: name.to_string(),
+            identity: None,
+        }
+    }
+
+    /// What to show for this resolution: the credential's identity when `me`
+    /// went through a service principal, the member's name otherwise.
+    pub fn display(&self) -> &str {
+        self.identity.as_deref().unwrap_or(&self.name)
+    }
+}
+
+/// Resolve `me` for a service-principal credential to its shadow bot member.
+async fn resolve_service_principal_self(
+    me: &pbotcli_types::User,
+    client: &PlaneClient,
+) -> Result<ResolvedUser, PlaneError> {
+    let sp_name = me.display_label();
+    let members = client.list_members().await?;
+    match find_shadow_bot(&members, &sp_name) {
+        Some(member) => Ok(ResolvedUser {
+            id: member.id.clone(),
+            name: member.full_name(),
+            identity: Some(me.identity_label()),
+        }),
+        None => Err(PlaneError::not_found_with_hint(
+            format!(
+                "Cannot resolve 'me': {identity} has no shadow bot workspace member \
+                 (expected a member named 'svc-{sp_name} (bot)'). The service principal's own id is \
+                 not a member id, so assigning it would silently do nothing.",
+                identity = me.identity_label(),
+            ),
+            "Run 'pbot user ls' to list the workspace members, then pass --assignee with the \
+             member's name or UUID.",
+        )),
+    }
+}
+
+/// The workspace member that is the shadow bot user of the service principal
+/// named `sp_name`.
+///
+/// Matching is [`pbotcli_types::Member::matches_service_principal`]: the server
+/// composes the row as `display_name` `svc-<name> (bot)` / `first_name`
+/// `svc-<name>` (`service_principals/attribution.py`), and only a name carrying
+/// that composition counts — a human member who happens to share the SP's name
+/// is never resolved as its bot.
+pub fn find_shadow_bot<'a>(
+    members: &'a [pbotcli_types::Member],
+    sp_name: &str,
+) -> Option<&'a pbotcli_types::Member> {
+    members
+        .iter()
+        .find(|member| member.matches_service_principal(sp_name))
+}
+
+/// The body of the one-line warning a cross-project scan prints after skipping
+/// projects the credential cannot read; callers prefix it with `warning:` and
+/// the verb that fits (`searched` / `listed`). Built here so the work-item
+/// lookup and the `wi ls` listing cannot drift apart.
+pub fn skipped_projects_note(total: usize, skipped: &[String]) -> String {
+    format!(
+        "{} of {} projects; no read access to {} — pass -p <project> to target one directly",
+        total.saturating_sub(skipped.len()),
+        total,
+        skipped.join(", ")
+    )
 }
 
 /// A located work item: the raw item plus the project context it lives in.
@@ -308,28 +416,73 @@ pub async fn locate_work_item_in_project(
 
 /// Locate a work item across all projects, matching by UUID, full identifier,
 /// or name. Cross-project searches fire many requests, so projects are paced.
+///
+/// A project the credential cannot read is skipped, not fatal. A service
+/// principal is granted per project, so it answers 403 on every project it has
+/// no grant for (a project it cannot see at all answers 404): aborting the scan
+/// on the first one made `pbot wi show <query>` without `-p` fail even when a
+/// readable project held the item. Failures that are not a per-resource access
+/// denial — a rejected credential, a transport error, a 5xx — still propagate.
 pub async fn locate_work_item_across(
     query: &str,
     client: &PlaneClient,
 ) -> Result<LocatedWorkItem, PlaneError> {
     let projects = client.list_projects().await?;
     let mut candidates: Vec<(pbotcli_types::WorkItem, String)> = Vec::new();
+    let mut skipped: Vec<String> = Vec::new();
     for (i, project) in projects.iter().enumerate() {
         if i > 0 {
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         }
-        let items = client.list_work_items(&project.id).await?;
+        let items = match client.list_work_items(&project.id).await {
+            Ok(items) => items,
+            Err(err) if pbotcli_client::is_resource_access_denied(&err) => {
+                skipped.push(project_label(project));
+                continue;
+            }
+            Err(err) => return Err(err),
+        };
         let identifier = project.identifier.clone().unwrap_or_default();
         candidates.extend(items.into_iter().map(|item| (item, identifier.clone())));
+    }
+    if !skipped.is_empty() {
+        eprintln!(
+            "warning: searched {}",
+            skipped_projects_note(projects.len(), &skipped)
+        );
     }
     let refs: Vec<(pbotcli_types::WorkItem, &str)> = candidates
         .iter()
         .map(|(i, s)| (i.clone(), s.as_str()))
         .collect();
-    match_work_item(query, &refs).ok_or_else(|| PlaneError::NotFound {
-        message: format!("Work item not found: {query}"),
-        hint: None,
-    })
+    match match_work_item(query, &refs) {
+        Some(found) => Ok(found),
+        None if !skipped.is_empty() => Err(PlaneError::not_found_with_hint(
+            format!("Work item not found: {query}"),
+            format!(
+                "The search skipped {} project(s) this credential cannot read: {}. \
+                 Pass -p <project> to search a readable project directly.",
+                skipped.len(),
+                skipped.join(", ")
+            ),
+        )),
+        None => Err(PlaneError::NotFound {
+            message: format!("Work item not found: {query}"),
+            hint: None,
+        }),
+    }
+}
+
+/// How a skipped project is named in a warning or hint: its name, else its
+/// identifier, else its UUID. Public so both cross-project scans (the work-item
+/// lookup and the `wi ls` listing) name a skipped project the same way.
+pub fn project_label(project: &pbotcli_types::Project) -> String {
+    project
+        .name
+        .clone()
+        .filter(|n| !n.trim().is_empty())
+        .or_else(|| project.identifier.clone().filter(|i| !i.trim().is_empty()))
+        .unwrap_or_else(|| project.id.clone())
 }
 
 #[cfg(test)]
@@ -550,5 +703,67 @@ mod tests {
         let candidates = cands_with(&[&wi], "PLANE");
         let m = match_work_item("hotfix-2", &candidates).expect("name fallback must still run");
         assert_eq!(m.item.id, "i-hf");
+    }
+
+    fn member(id: &str, display: &str, first: &str) -> pbotcli_types::Member {
+        pbotcli_types::Member {
+            id: id.to_string(),
+            display_name: Some(display.to_string()),
+            first_name: Some(first.to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn find_shadow_bot_matches_the_server_composition() {
+        // Live shape: display_name carries the composition, first_name the bare
+        // SP name (a deployment predating `bot_first_name`).
+        let members = vec![
+            member("u-human", "Jicai.Liu", "Jicai"),
+            member(
+                "e-shadow",
+                "svc-Kimicode IsletspaceWorkstation (bot)",
+                "Kimicode IsletspaceWorkstation",
+            ),
+        ];
+        let found = find_shadow_bot(&members, "Kimicode IsletspaceWorkstation")
+            .expect("the shadow bot row must be found");
+        assert_eq!(found.id, "e-shadow");
+    }
+
+    #[test]
+    fn find_shadow_bot_prefers_the_bot_row_over_a_same_named_human() {
+        // The human shares the SP's name but carries no bot composition, so the
+        // row that does is the only match.
+        let members = vec![
+            member("u-human", "Deploy Bot", "deploy-bot"),
+            member("e-shadow", "svc-deploy-bot (bot)", "svc-deploy-bot"),
+        ];
+        let found = find_shadow_bot(&members, "deploy-bot").expect("found");
+        assert_eq!(found.id, "e-shadow");
+    }
+
+    #[test]
+    fn find_shadow_bot_returns_none_when_no_row_matches() {
+        let members = vec![member("u-human", "Jicai.Liu", "Jicai")];
+        assert!(find_shadow_bot(&members, "deploy-bot").is_none());
+        // A blank SP name matches nothing, not everything.
+        assert!(find_shadow_bot(&members, "").is_none());
+        // A bare name equal to the SP's is a human, not the bot: resolving it
+        // would assign the bot's work to that person.
+        let same_name_human = vec![member("u-human", "Deploy Bot", "deploy-bot")];
+        assert!(find_shadow_bot(&same_name_human, "deploy-bot").is_none());
+    }
+
+    #[test]
+    fn project_label_prefers_name_then_identifier_then_id() {
+        assert_eq!(project_label(&proj("p-1", "Demo", "DEMO")), "Demo");
+        let mut no_name = proj("p-2", "", "DEMO2");
+        no_name.name = None;
+        assert_eq!(project_label(&no_name), "DEMO2");
+        let mut bare = proj("p-3", "", "");
+        bare.name = None;
+        bare.identifier = None;
+        assert_eq!(project_label(&bare), "p-3");
     }
 }

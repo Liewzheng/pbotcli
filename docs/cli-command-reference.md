@@ -16,7 +16,9 @@ pbot [global flags] <command> [<subcommand>] [<argument>...] [flags]
 
 ## DESCRIPTION
 
-Every resource argument accepts a **name**, an **identifier** (`ABC-123`), or a **UUID**; close names resolve by fuzzy match (token-sort-ratio, threshold 60). The authenticated user can be referenced as `me` wherever an assignee is expected.
+Every resource argument accepts a **name**, an **identifier** (`ABC-123`), or a **UUID**; close names resolve by fuzzy match (token-sort-ratio, threshold 60). The authenticated user can be referenced as `me` wherever an assignee is expected; under a service-principal token `me` resolves to that principal's **shadow bot workspace member** (see [pbot whoami](#pbot-whoami)).
+
+A lookup that spans projects (`wi show`, `wi ls` without `-p`) **skips** a project the credential cannot read — HTTP 403, which is what a service principal sees on every project it has no grant for, or 404 — and warns which projects were skipped, instead of failing the whole lookup on the first one. Any other failure (a rejected credential, a 5xx) still aborts the command; a `wi show` that then matches nothing lists the projects the search could not cover in its hint.
 
 Human-readable tables are written to **stderr**, machine-readable JSON to **stdout**, so `pbot ... --json 2>/dev/null` always yields clean JSON. Reads are cached on disk; writes invalidate the affected resource and, where the API can silently ignore a write (dates, triage, uploads), the result is verified by reading it back.
 
@@ -81,6 +83,22 @@ Show the authenticated user.
 ```
 pbot whoami [--json]
 ```
+
+`--json` prints the raw `/api/v1/users/me/` payload. The table's `name` row says which kind of
+credential is in use: a **human** account prints its plain name, a **service principal** prints
+`<name> (service principal)` — a token issued for a bot, with no person fields to show — or
+`<name> (SP owned by <owner>)` when the payload names the owning human. The API does not send the
+owner today (it deliberately never serializes the owner's profile), so the plain marker is what a
+service principal normally sees.
+
+### `me` under a service principal
+
+`me` resolves to the credential's **shadow bot workspace member**: the `User` row Plane credits the
+principal's writes to, listed by `pbot user ls` as `svc-<name> (bot)`. This matters because a
+service principal answers `/users/me/` with its `ServicePrincipal.id`, which is **not** a member id —
+assigning it does nothing and filtering on it returns nothing. `me` never sends that id to the API.
+When no matching member exists, `me` fails with a hint naming `pbot user ls` instead of handing back
+an id that would be silently ignored.
 
 ## pbot configure
 

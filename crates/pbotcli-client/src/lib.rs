@@ -1372,6 +1372,11 @@ struct PageEnvelope<T> {
 }
 
 /// Map an HTTP error to a typed `PlaneError` (exit codes 2/3/4).
+///
+/// The `API error (HTTP <code>)` prefix it builds is a contract: it is the only
+/// status the error type carries (see [`error_http_status`]), and callers that
+/// must tell a per-project access denial apart from a real failure read it back
+/// out of the message. Change the wording here and update that reader.
 pub fn map_api_error(status: reqwest::StatusCode, body: &str) -> PlaneError {
     match status.as_u16() {
         401 => PlaneError::Auth {
@@ -1392,6 +1397,37 @@ pub fn map_api_error(status: reqwest::StatusCode, body: &str) -> PlaneError {
             PlaneError::Api { message }
         }
     }
+}
+
+/// The HTTP status an API failure came from, when it carries one.
+///
+/// `PlaneError` (in `pbotcli-core`) has no status field, so a caller that has
+/// to tell "this credential may not read *this* project" from a real failure
+/// reads the status off the error the two producers stamp: [`map_api_error`]
+/// prefixes every message with `API error (HTTP <status>)`, and a 404 is the
+/// `NotFound` variant. `None` means the failure has no HTTP status — a
+/// transport error, or an error built locally (a lookup that found nothing).
+pub fn error_http_status(err: &PlaneError) -> Option<u16> {
+    if matches!(err, PlaneError::NotFound { .. }) {
+        return Some(404);
+    }
+    let PlaneError::Api { message } = err else {
+        return None;
+    };
+    let rest = message.strip_prefix("API error (HTTP ")?;
+    let (code, _) = rest.split_once(')')?;
+    code.trim().parse().ok()
+}
+
+/// True when the failure means "this credential may not read this resource":
+/// a 403, or a 404 for a resource that is invisible to it.
+///
+/// A service principal is granted per project, so it sees 403 on every project
+/// it has no grant for — a cross-project scan skips those instead of aborting.
+/// A 401 is *not* this: that is the credential itself being rejected, and it
+/// must fail loudly.
+pub fn is_resource_access_denied(err: &PlaneError) -> bool {
+    matches!(error_http_status(err), Some(403 | 404))
 }
 
 /// Extract human-readable detail from an API error body: a top-level `detail`
@@ -1506,6 +1542,62 @@ mod tests {
             map_api_error(status(429), ""),
             PlaneError::Api { .. }
         ));
+    }
+
+    #[test]
+    fn error_http_status_reads_the_status_off_the_mapped_error() {
+        // The prefix this reads is map_api_error's own contract, so pin it.
+        let err = map_api_error(status(403), r#"{"detail":"no active grant"}"#);
+        let PlaneError::Api { message } = &err else {
+            panic!("403 must map to an Api error, got {err:?}");
+        };
+        assert!(
+            message.starts_with("API error (HTTP 403): "),
+            "error_http_status parses this prefix: {message}"
+        );
+        assert_eq!(error_http_status(&err), Some(403));
+        // 404 keeps its variant, so the status survives the mapping.
+        assert_eq!(
+            error_http_status(&map_api_error(status(404), "")),
+            Some(404)
+        );
+        // A 5xx is an API error and still carries its code.
+        assert_eq!(
+            error_http_status(&map_api_error(status(500), "boom")),
+            Some(500)
+        );
+        // A 429 is mapped to a retry-exhausted summary with no status prefix.
+        assert_eq!(error_http_status(&map_api_error(status(429), "")), None);
+    }
+
+    #[test]
+    fn error_http_status_is_none_without_a_status() {
+        assert_eq!(
+            error_http_status(&PlaneError::Auth {
+                message: "Authentication failed.".into()
+            }),
+            None
+        );
+        assert_eq!(
+            error_http_status(&PlaneError::validation("bad input")),
+            None
+        );
+        assert_eq!(
+            error_http_status(&PlaneError::Api {
+                message: "request to /x failed: connection refused".into()
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn only_403_and_404_count_as_a_resource_access_denial() {
+        assert!(is_resource_access_denied(&map_api_error(status(403), "")));
+        assert!(is_resource_access_denied(&map_api_error(status(404), "")));
+        // A rejected credential is not a per-project denial: it must fail loudly.
+        assert!(!is_resource_access_denied(&map_api_error(status(401), "")));
+        assert!(!is_resource_access_denied(&map_api_error(status(500), "")));
+        assert!(!is_resource_access_denied(&PlaneError::validation("x")));
     }
 
     #[test]

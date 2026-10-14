@@ -35,6 +35,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - The skill's install notes point the soft-link example at the same checkout
   path as the clone example, and its "the command is `pbot`" paragraph no longer
   reads as if `pbot` were an alias of a differently-behaving `pbotcli` binary.
+- `pbot whoami` marks a service-principal credential in its `name` row:
+  `<name> (service principal)`, or `<name> (SP owned by <owner>)` when the
+  `/users/me/` payload names the owning human. A bot token no longer reads like
+  a person with fields that failed to load; a human credential's rows are
+  unchanged, and `--json` still prints the raw payload.
+- A cross-project lookup (`pbot wi show`, `pbot wi ls` without `-p`) no longer
+  fails on the first project the credential cannot read: a project that answers
+  403 — what a service principal gets on every project it has no grant for — or
+  404 is skipped, with a warning naming what was left out. A `wi show` that
+  then matches nothing lists the skipped projects in its hint. Failures that
+  are not a per-project denial still abort.
+- The skill's member-listing example now spells the command correctly
+  (`pbot user ls`): `pbot users ls` was never a valid subcommand.
 
 ### Fixed
 - A work-item identifier that matches nothing no longer resolves to a different
@@ -43,6 +56,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   code 3). The write paths that share the resolver (`wi update`, `wi create
   --parent`) reject the same reference without sending a mutating request.
   Ordinary name queries keep resolving by substring and fuzzy match, unchanged.
+- `--assignee me` under a service-principal token now resolves to that
+  principal's shadow bot workspace member (`svc-<name> (bot)`, the `User` row
+  Plane credits its writes to) instead of the principal's own id, which is not
+  a member: `wi create`/`wi update`/`wi assign` assignments to `me` used to be
+  silently ignored, and `wi ls --assignee me` used to return an empty list. When
+  no such member exists the command fails with a hint naming `pbot user ls`
+  instead of resolving to nothing.
 - `docs/rust-rewrite.md` no longer lists crates.io as a live install channel: the
   crate is not published, and the released CLI comes from the Homebrew tap.
 

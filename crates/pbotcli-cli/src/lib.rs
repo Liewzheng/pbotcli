@@ -1708,7 +1708,11 @@ async fn cmd_whoami(client: &PlaneClient, json: bool) -> Result<(), PlaneError> 
     } else {
         let mut rows = vec![
             vec!["id".to_string(), me.id.clone()],
-            vec!["name".to_string(), me.display_label()],
+            // A person's name is unchanged; a service principal carries its
+            // marker here (`name (service principal)`, or `(SP owned by …)`
+            // when the payload names the owner), so "who am I" is answerable
+            // from the first row instead of only from `type`.
+            vec!["name".to_string(), me.identity_label()],
         ];
         // A service principal carries `type` and no person fields; naming the
         // kind keeps the identity readable instead of looking like a credential
@@ -1923,6 +1927,7 @@ async fn cmd_wi_list(
 
     // Each row keeps the raw item (for uuid-based filters) and its rendered view.
     let mut rows: Vec<(WorkItem, serde_json::Value)> = Vec::new();
+    let mut skipped: Vec<String> = Vec::new();
     let multi = projects.len() > 1;
     for (i, proj) in projects.iter().enumerate() {
         if multi && i > 0 {
@@ -1933,9 +1938,28 @@ async fn cmd_wi_list(
         }
         let project_id = proj.id.clone();
         let identifier = proj.identifier.clone().unwrap_or_default();
-        let items = client.list_work_items(&project_id).await?;
-        let states = client.list_states(&project_id).await?;
-        let labels_list = client.list_labels(&project_id).await?;
+        // A project this credential cannot read is skipped, not fatal: without
+        // `-p` the listing spans projects, and a service principal answers 403
+        // on every project it has no grant for. Aborting there would hide the
+        // rows of the projects it *can* read. The guard covers the whole
+        // project-scoped load (items, states, labels) so a denial on any of
+        // them skips the project instead of half-rendering it; other failures
+        // still propagate.
+        let loaded = async {
+            let items = client.list_work_items(&project_id).await?;
+            let states = client.list_states(&project_id).await?;
+            let labels_list = client.list_labels(&project_id).await?;
+            Ok::<_, PlaneError>((items, states, labels_list))
+        }
+        .await;
+        let (items, states, labels_list) = match loaded {
+            Ok(loaded) => loaded,
+            Err(err) if pbotcli_client::is_resource_access_denied(&err) => {
+                skipped.push(pbotcli_resolve::project_label(proj));
+                continue;
+            }
+            Err(err) => return Err(err),
+        };
         let state_map: HashMap<String, String> = states
             .into_iter()
             .map(|s| (s.id, s.name.unwrap_or_default()))
@@ -1954,11 +1978,31 @@ async fn cmd_wi_list(
             (item, view)
         }));
     }
+    if !skipped.is_empty() {
+        eprintln!(
+            "warning: listed {}",
+            pbotcli_resolve::skipped_projects_note(projects.len(), &skipped)
+        );
+    }
 
     // --assignee filter (by member id, exact)
     if let Some(q) = assignee {
-        let (user_id, _) = resolve_user_query(q, client).await?;
-        rows.retain(|(item, _)| work_item_has_assignee(item, &user_id));
+        let resolved = resolve_user_query(q, client).await?;
+        rows.retain(|(item, _)| work_item_has_assignee(item, &resolved.id));
+        // `me` has two different meanings depending on the credential — the
+        // member the account itself is, or the service principal's shadow bot —
+        // and either can legitimately have nothing assigned. Say which identity
+        // was listed and that the empty result is about it, so an empty table
+        // is never mistaken for a resolution that silently failed.
+        if rows.is_empty() && q.eq_ignore_ascii_case("me") {
+            let who = match resolved.identity.as_deref() {
+                Some(identity) => identity.to_string(),
+                None => format!("{}, your human account", resolved.name),
+            };
+            eprintln!(
+                "note: no work items are assigned to {who}, which is what 'me' resolves to here."
+            );
+        }
     }
     // --state filter: comma tokens, substring match on the resolved state name
     if let Some(q) = state {
@@ -2571,8 +2615,8 @@ async fn cmd_wi_create(
         write.labels = Some(label_ids);
     }
     if let Some(assignee) = opts.assignee {
-        let (user_id, _) = resolve_user_query(assignee, client).await?;
-        write.assignees = Some(vec![user_id]);
+        let resolved = resolve_user_query(assignee, client).await?;
+        write.assignees = Some(vec![resolved.id]);
     }
     if let Some(parent) = opts.parent {
         let located = locate_work_item_in_project(parent, &proj, client).await?;
@@ -2672,8 +2716,8 @@ async fn cmd_wi_update(
         write.state = Some(state);
     }
     if let Some(assignee) = opts.assignee {
-        let (user_id, _) = resolve_user_query(assignee, client).await?;
-        write.assignees = Some(vec![user_id]);
+        let resolved = resolve_user_query(assignee, client).await?;
+        write.assignees = Some(vec![resolved.id]);
     }
     if opts.labels.is_some() || opts.clear_labels {
         write.labels = Some(label_ids);
@@ -3820,15 +3864,19 @@ async fn cmd_wi_assign(
     project: Option<&str>,
 ) -> Result<(), PlaneError> {
     let located = locate_issue(client, issue, project).await?;
-    let (user_id, user_name) = resolve_user_query(assignee.unwrap_or("me"), client).await?;
+    let resolved = resolve_user_query(assignee.unwrap_or("me"), client).await?;
+    // `display()` names the credential's identity when `me` went through a
+    // service principal (whose shadow bot user did the assignment), the
+    // member's name otherwise. Read it before the id moves into the payload.
+    let assigned_to = resolved.display().to_string();
     let write = WorkItemWrite {
-        assignees: Some(vec![user_id]),
+        assignees: Some(vec![resolved.id]),
         ..Default::default()
     };
     client
         .update_work_item(&located.project_id, &located.item.id, &write)
         .await?;
-    eprintln!("Work item assigned to {user_name}.");
+    eprintln!("Work item assigned to {assigned_to}.");
     Ok(())
 }
 
