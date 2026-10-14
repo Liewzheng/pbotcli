@@ -6,8 +6,8 @@
 # Setup
 # ──────────────────────────────────────────────
 
-install: ## Install the CLI locally (pbotcli + pbot into ~/.cargo/bin)
-	@echo "install - Install the CLI locally"
+install: ## Throwaway test build (cargo install into ~/.cargo/bin; releases come from the brew tap)
+	@echo "install - Throwaway test build; releases come from the brew tap"
 
 	cargo install --path crates/pbotcli-cli --locked
 

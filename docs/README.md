@@ -25,8 +25,17 @@ repository, and the documents that describe it are marked as historical
 
 ## Quick start
 
+The released CLI is installed from the Homebrew tap:
+
 ```bash
-cargo install --path crates/pbotcli-cli --locked   # from a checkout
+brew install Liewzheng/tap/pbotcli   # first time; afterwards brew upgrade pbotcli
+```
+
+A build from a checkout is a **test build** — use it to exercise a branch, then remove it with
+`cargo uninstall pbotcli-cli`:
+
+```bash
+cargo install --path crates/pbotcli-cli --locked
 ```
 
 Credentials: environment variables `PLANE_BASE_URL`, `PLANE_API_KEY`,

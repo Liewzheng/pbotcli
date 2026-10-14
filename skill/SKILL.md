@@ -28,11 +28,11 @@ metadata:
 > `workspace.package.version`, so a synced copy should always exist on
 > `main`.
 
-**The command is `pbot`** (short alias of the full binary `pbotcli`) — a single
-static binary installed from the Homebrew tap (`brew install Liewzheng/tap/pbotcli`),
-which provides both `pbot` and `pbotcli`. Every command group (whoami, configure,
-project, wi, comment, relations, attachment, doc, intake, label, state, module,
-cycle, user, cache), fuzzy resolution, `--json` dual output, caching, markdown input
+**The command is `pbot`** (short alias of the full binary `pbotcli`) — two separate binaries
+built from the one `pbotcli-cli` package, installed from the Homebrew tap
+(`brew install Liewzheng/tap/pbotcli`), both running the same CLI. Every command group
+(whoami, configure, project, wi, comment, relations, attachment, doc, intake, label, state,
+module, cycle, user, cache), fuzzy resolution, `--json` dual output, caching, markdown input
 and inline images.
 
 Install and update the released CLI from the Homebrew tap — never from a checkout:
