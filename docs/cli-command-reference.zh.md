@@ -716,7 +716,7 @@ pbot intake enabled <project> [--json]
 
 ## pbot doc
 
-所有 `doc` 子命令都必须带 `-p <project>`：v1 API 只提供项目级页面路由，不存在工作区级页面路由。`list` / `create` / `update` / `archive` / `delete` 缺 `-p` 时在发请求前就被本地拒绝——退出码 5，并给出点名 `-p <project>` 的 `Hint:`。`show` 是唯一的例外：它会先尝试查询，再把 404 换成同一条提示，这样只存在于其他作用域的页面 UUID 也能得到明确答复。
+所有 `doc` 子命令都必须带 `-p <project>`：v1 API 只提供项目级页面路由，不存在工作区级页面路由。`list` / `create` / `update` / `archive` / `delete` 缺 `-p` 时在发请求前就被本地拒绝——退出码 5，并给出点名 `-p <project>` 的 `Hint:`。`show` 是唯一的例外：它会先尝试查询，再把 404 换成同一条提示，这样只存在于其他作用域的页面 UUID 也能得到明确答复。`--dry-run` 同样适用：`create` / `update` 的预览也要求 `-p`，缺了同样被拒；此前它们不带 `-p` 也会打印计划。
 
 ### pbot doc list
 

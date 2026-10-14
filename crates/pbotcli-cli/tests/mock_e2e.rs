@@ -1350,6 +1350,123 @@ fn doc_archive_without_project_exits_5_without_a_request() {
     assert_doc_requires_project(&["doc", "archive", "Spec"]);
 }
 
+/// The `--dry-run` previews are not exempt from the `-p` requirement: a plan for
+/// an action that could never run is not a useful preview. Before this branch
+/// they printed the plan without `-p` (and the `create` one without any request
+/// at all), so this is a user-visible change, not just a refactor.
+#[test]
+fn doc_create_dry_run_without_project_exits_5_without_a_request() {
+    assert_doc_requires_project(&[
+        "doc",
+        "create",
+        "--title",
+        "Spec",
+        "--content-raw",
+        "body",
+        "--dry-run",
+    ]);
+}
+
+#[test]
+fn doc_update_dry_run_without_project_exits_5_without_a_request() {
+    assert_doc_requires_project(&["doc", "update", "Spec", "--title", "New", "--dry-run"]);
+}
+
+/// One page in the demo project, so a name-based `doc update` can resolve it.
+const PROJECT_PAGES: &str = r#"{"results":[{"id":"pg1","name":"Spec","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-02T00:00:00Z"}],"next_cursor":null,"next_page_results":false}"#;
+
+/// With `-p` the preview still works: the plan is printed, the exit code is 0,
+/// and no mutating request is sent.
+fn assert_dry_run_preview(args: &[&str], expect_line: &str) {
+    let mut server = Server::new();
+    mock_project_reads(&mut server, ITEMS);
+    server
+        .mock("GET", "/api/v1/workspaces/ws/projects/p1/pages/")
+        .match_query(mockito::Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(PROJECT_PAGES)
+        .create();
+    let mut negatives = vec![
+        server
+            .mock("POST", mockito::Matcher::Any)
+            .with_status(500)
+            .expect(0)
+            .create(),
+        server
+            .mock("PATCH", mockito::Matcher::Any)
+            .with_status(500)
+            .expect(0)
+            .create(),
+        server
+            .mock("DELETE", mockito::Matcher::Any)
+            .with_status(500)
+            .expect(0)
+            .create(),
+    ];
+
+    let mut full: Vec<&str> = args.to_vec();
+    full.extend_from_slice(&["--json", "--no-cache"]);
+    let out = run(&full, &server.url());
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("dry run: no writes will be performed"),
+        "expected the preview header: {err}"
+    );
+    assert!(
+        err.contains(expect_line),
+        "expected {expect_line:?} in the preview: {err}"
+    );
+    assert!(
+        err.contains("summary: 0 to upload, 0 kept, 0 error(s), 0 unprocessed"),
+        "expected the summary line: {err}"
+    );
+    for mock in &mut negatives {
+        mock.assert();
+    }
+}
+
+#[test]
+fn doc_create_dry_run_with_project_still_prints_the_plan() {
+    assert_dry_run_preview(
+        &[
+            "doc",
+            "create",
+            "--title",
+            "Spec",
+            "-p",
+            "Demo",
+            "--content-raw",
+            "body",
+            "--dry-run",
+        ],
+        "project=p1 page=(new page \"Spec\")",
+    );
+}
+
+#[test]
+fn doc_update_dry_run_with_project_still_prints_the_plan() {
+    assert_dry_run_preview(
+        &[
+            "doc",
+            "update",
+            "Spec",
+            "-p",
+            "Demo",
+            "--title",
+            "New",
+            "--dry-run",
+        ],
+        "project=p1 page=pg1 (Spec)",
+    );
+}
+
 #[test]
 fn doc_delete_without_project_exits_5_without_a_request() {
     assert_doc_requires_project(&["doc", "delete", "Spec"]);

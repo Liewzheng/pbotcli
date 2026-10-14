@@ -723,6 +723,8 @@ on `list`, `create`, `update`, `archive`, or `delete` is rejected locally before
 any request — exit 5 with a `Hint:` naming `-p <project>`. `show` is the one
 exception: it attempts the lookup and turns the resulting 404 into the same
 hint, so a page UUID that only exists in another scope still gets a clear answer.
+This covers `--dry-run` as well: the `create` and `update` previews take the same
+`-p` and are rejected the same way, where they previously printed a plan without it.
 
 ### pbot doc list
 

@@ -17,8 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `archive`, and `delete` are rejected locally with exit code 5 and a hint naming
   the flag instead of sending a request to a workspace-level pages route the
   server does not have; `show` keeps its existing behaviour of attempting the
-  lookup and turning the 404 into the same hint. The `--help` text and the
-  command reference now say so.
+  lookup and turning the 404 into the same hint. That includes the `--dry-run`
+  previews of `create` and `update`, which used to print a plan without `-p` for
+  an action that could never have run. The `--help` text and the command
+  reference now say so.
 - `make check` runs `cargo fmt --all -- --check` before clippy and the tests, so
   the local gate covers all three checks CI runs; `make format-check` exposes
   that check on its own. AGENTS.md and the CI header now state the two remaining

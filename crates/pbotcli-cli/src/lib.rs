@@ -4188,10 +4188,11 @@ async fn cmd_state_delete(
 /// given, the workspace's pages otherwise (mirrors the Python commands, where
 /// every scope decision is `project → project pages, else workspace pages`).
 ///
-/// Only `doc show` still uses this: it resolves a UUID through the scope's
-/// route, so it attempts the lookup and turns the resulting 404 into the
-/// `-p <project>` hint. Commands that cannot work without a project use
-/// [`require_page_scope`] instead.
+/// This is the one place a page scope resolves a project. `doc show` uses it
+/// directly: it resolves a UUID through the scope's route, so it attempts the
+/// lookup and turns the resulting 404 into the `-p <project>` hint. Every other
+/// `doc` command wraps it in [`require_page_scope`], which rejects a missing
+/// `-p` before any of that happens.
 async fn page_scope(client: &PlaneClient, project: Option<&str>) -> Result<PageScope, PlaneError> {
     match project {
         Some(p) => {
@@ -4202,29 +4203,29 @@ async fn page_scope(client: &PlaneClient, project: Option<&str>) -> Result<PageS
     }
 }
 
-/// Resolve the project scope a `doc` command cannot work without, rejecting a
-/// missing `-p` locally with a `Validation` error (exit 5) and a hint naming the
-/// flag — never a request to a route the server does not have. The v1 API
-/// serves pages under a project only, so `doc ls` / `create` / `update` /
-/// `archive` / `delete` all funnel through here rather than each inventing its
-/// own failure mode.
+/// The project scope a `doc` command cannot work without: a thin rejection layer
+/// over [`page_scope`], so `-p` is resolved in exactly one place. A missing flag
+/// is a local `Validation` error (exit 5) with a hint naming it — never a
+/// request to a route the server does not have.
+///
+/// `doc ls` / `create` / `update` / `archive` / `delete` all funnel through here
+/// rather than each inventing its own failure mode. That includes the `--dry-run`
+/// previews of `create` and `update`: a plan for an action that could never run
+/// is not a useful preview.
 async fn require_page_scope(
     client: &PlaneClient,
     project: Option<&str>,
 ) -> Result<PageScope, PlaneError> {
-    match project {
-        Some(p) => {
-            let proj = resolve_project(p, client).await?;
-            Ok(PageScope::Project(proj.id))
-        }
-        None => Err(PlaneError::Validation {
+    if project.is_none() {
+        return Err(PlaneError::Validation {
             message: "Project is required for this command.".into(),
             hint: Some(
                 "This server has no workspace-level pages route; pass `-p <project>` to target the project's pages."
                     .into(),
             ),
-        }),
+        });
     }
+    page_scope(client, project).await
 }
 
 /// Resolve a page reference by UUID (direct fetch) or fuzzy name (against the
