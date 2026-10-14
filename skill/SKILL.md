@@ -4,16 +4,16 @@ description: "Manage Plane.so through the pbot / pbotcli CLI — work items, pro
 allowed-tools: Bash(pbot *, pbotcli *)
 metadata:
   author: pbotcli maintainers
-  version: "1.5.2"
+  version: "1.5.3"
 ---
 
 # pbot — pbotcli
 
-> **Skill version: 1.5.2 — must match `pbot --version`.** A stale skill is
+> **Skill version: 1.5.3 — must match `pbot --version`.** A stale skill is
 > worse than no skill: every command and flag listed below may have been
 > added, renamed or removed since this was written. Before answering any
 > `pbot …` question, verify the version with `pbot --version`. If it differs
-> from `1.5.2`, this document is stale:
+> from `1.5.3`, this document is stale:
 >
 > - End users: `brew upgrade pbotcli` (or `brew install Liewzheng/tap/pbotcli`
 >   the first time), or the prebuilt installer from the Releases page, then
@@ -50,10 +50,11 @@ afterwards, so the released `pbotcli` stays the only one on `PATH`.
 ## Key Concepts
 
 - **Fuzzy resolution**: every resource argument (project, state, user, work item) accepts a name, an identifier (`ABC-123`), or a UUID; close names resolve. **Projects** prefer exact identifiers and names (case-insensitive) over fuzzy matches, and print a warning when only a fuzzy match exists; **states** prefer exact names with a fuzzy fall-back; **labels** match exactly by name (or UUID) — a missing label errors with the available list instead of silently applying the closest one. User and work-item resolution are unchanged (fuzzy by name, exact by identifier/UUID).
-- **`me`**: the authenticated user, valid wherever an assignee is expected.
+- **`me`**: the authenticated user, valid wherever an assignee is expected. Under a **service-principal** API key (the `plane_api_…` token a workspace creates for a bot) `me` resolves to that principal's **shadow bot workspace member** — the `User` row Plane credits its writes to, named `svc-<principal> (bot)`. The principal's own id (what `whoami` prints as `id`) is *not* a member, so assigning it does nothing and filtering on it returns nothing; `me` therefore never hands that id to the API. Every service-principal `me` result names what it resolved to, member UUID included: each write (`wi assign`, `wi create`, `wi update`) prints `Work item assigned to <principal> (service principal) as its shadow bot member '<member row name>' (member id <uuid>).` once the write lands, and `wi ls --assignee me` prints a note naming the member plus the next command when the filter comes back empty. When no shadow bot member exists, the command fails with a hint naming `pbot user ls` instead of returning an empty list. A human credential's `me` output is unchanged, and an explicit name or UUID never prints an identity note.
+- **Service-principal identity**: `pbot whoami` marks the credential kind in its `name` row — `name (service principal)`, or `name (SP owned by <owner>)` when the `/users/me/` payload names the owning human. That owner is normally absent because the server refuses a service principal the owner's profile (a permission decision, not a client gap); the CLI reads the field forward-compatibly. A human credential prints the plain name.
 - **`--json`**: pass it on every command; JSON goes to stdout, the human table to stderr.
 - **Caching**: reads are cached on disk. `--no-cache` bypasses it for one command; `pbot cache clear` resets it. Read back your own writes with `--no-cache`.
-- **Project scoping**: most commands take `-p PROJECT`. Identifiers (`ABC-123`) resolve across projects, and `wi ls` without `-p` spans all projects.
+- **Project scoping**: most commands take `-p PROJECT`. Identifiers (`ABC-123`) resolve across projects, and `wi ls` without `-p` spans all projects. A cross-project lookup (`wi show` / `wi ls` without `-p`) **skips** a project the credential cannot read (HTTP 403 — a service principal is granted per project — or 404) instead of failing outright, and prints a warning naming what it skipped; a `wi show` that finds nothing then names the skipped projects in its hint.
 
 ## Setup & Authentication
 
@@ -84,8 +85,12 @@ flag, filter, or sort key.
 ```bash
 pbot whoami --json          # authenticated user
 pbot configure              # interactive setup
-pbot users ls --json        # workspace members
+pbot user ls --json         # workspace members
 ```
+
+`pbot whoami`'s `name` row marks a service-principal credential (`name
+(service principal)`, or `name (SP owned by <owner>)` when the payload names
+the owner); `--json` keeps the raw `/users/me/` payload.
 
 ### Work Items (most common)
 

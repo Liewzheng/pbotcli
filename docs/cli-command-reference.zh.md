@@ -16,7 +16,9 @@ pbot [全局选项] <命令> [<子命令>] [<参数>...] [选项]
 
 ## 说明
 
-所有资源参数都支持**模糊解析**：可传名称、标识符（`ABC-123`）或 UUID；相近名称按相似度匹配（token-sort-ratio，阈值 60）。需要指定负责人处可用 `me` 表示当前用户。
+所有资源参数都支持**模糊解析**：可传名称、标识符（`ABC-123`）或 UUID；相近名称按相似度匹配（token-sort-ratio，阈值 60）。需要指定负责人处可用 `me` 表示当前用户；使用**服务主体**（service principal）凭证时，`me` 解析为该主体的**影子机器人成员**（见 [`pbot whoami`](#pbot-whoami)）。
+
+跨项目查找（不带 `-p` 的 `wi show`、`wi ls`）会**跳过**当前凭证读不到的项目 —— HTTP 403（服务主体对没有授权的项目都会返回该状态）或 404 —— 并提示跳过了哪些项目，而不是在第一个项目上整体失败。只有"读取该项目工作项"被拒才构成跳过：该项目的 states / labels 被拒属于另一种失败，会中断命令，而不会把"工作项明明读得到"的项目报成"no read access"。其他错误（凭证被拒、5xx）同样中断；`wi show` 查不到时，提示中会列出本次未能覆盖的项目。
 
 人读表格输出到 **stderr**，机读 JSON 输出到 **stdout**，因此 `pbot ... --json 2>/dev/null` 总能得到纯 JSON。读操作走磁盘缓存；写操作会使对应缓存失效；对于 API 可能"返回成功但实际未生效"的写入（日期、triage、上传），会回读校验。
 
@@ -81,6 +83,26 @@ pbot [全局选项] <命令> [<子命令>] [<参数>...] [选项]
 ```
 pbot whoami [--json]
 ```
+
+`--json` 输出 `/api/v1/users/me/` 的原始响应。表格的 `name` 行会标明凭证类型：**人类账户**直接显示名字；**服务主体**显示 `<名称> (service principal)`（机器人 token，没有可显示的人名字段），若响应里带 owner 名则显示 `<名称> (SP owned by <owner>)`。
+
+**为什么通常看不到 owner。** `/api/v1/users/me/` 刻意不序列化 owner 的资料：服务主体不允许读取拥有它的人类账户 —— 这是服务端的**权限设计**，不是客户端的能力缺失。因此 owner 采用前向兼容读取：只有当响应里出现 `owner`（对象或名字）或 `owner_name` 字段时才会显示上面的标记。会话专用的 `/api/workspaces/<slug>/service-principals/` 接口确实返回 `owner`，但它拒绝服务主体 token（403），所以 CLI 不会去探测它。
+
+### 服务主体下的 `me`
+
+`me` 解析为当前凭证的**影子机器人成员**：Plane 用来记录该主体写入的 `User` 行，`pbot user ls` 中显示为 `svc-<名称> (bot)`。这点很关键：服务主体调用 `/users/me/` 得到的是 `ServicePrincipal.id`，它**不是**成员 id —— 用它指派不会生效，用它过滤只会得到空列表。`me` 不会把这个 id 发给 API。
+
+服务主体下的每个 `me` 结果都会说明解析到了什么，方便无人值守的调用方无需读源码即可判断：
+
+- 任何以 `--assignee me` 发起的写入（`wi assign`、`wi create`、`wi update`）在写入落地后都会打印
+  `Work item assigned to <名称> (service principal) as its shadow bot member '<成员行名称>' (member id <uuid>).`
+  其中 `<成员行名称>` 取匹配到的成员行自身的 `display_name`（即 `pbot user ls --json` 里的该字段；人读表格对带该字段的行也显示它），便于据此定位该成员。
+- `wi ls --assignee me` 在没有匹配行时打印一行 note：说明主体、影子 bot 成员及其 UUID，以及下一条应执行的命令（`pbot wi ls -p <project> --assignee '<成员名或 uuid>'`，成员列表用 `pbot user ls`）。
+- 找不到影子 bot 成员时，`me` 报错（退出码 3），hint 指向 `pbot user ls`，而不是返回一个会被静默忽略的 id。
+- 如果成员列表本身读不到：`wi ls --assignee` 用名字或 `me` 时会以 hint 报错（退出码 3，没有成员列表无法完成过滤，而丢掉过滤会返回调用方没要的行）；显式给出的成员 id 仍可正常过滤 —— 那种情况下成员列表只用于显示名字。
+- 普通列表两种情况下都照常运行 —— 成员列表对它只是富化信息：负责人一列回退为成员 id 的前 8 个字符，并有一行 warning 指明是哪个调用被拒（`warning: could not read the workspace member list (…); assignee names will show the member id's first 8 characters — check access with 'pbot user ls'`）。成员列表只在真正会被用到时才读取：不带 `--assignee`、且所有行的负责人为空的列表不会发起该请求，也不会打印 warning。
+
+人类凭证的 `me` 输出保持不变：解析到账号自身的成员 id；显式给出的名字或 UUID 也不会打印任何身份 note。
 
 ## pbot configure
 

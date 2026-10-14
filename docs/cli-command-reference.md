@@ -16,7 +16,9 @@ pbot [global flags] <command> [<subcommand>] [<argument>...] [flags]
 
 ## DESCRIPTION
 
-Every resource argument accepts a **name**, an **identifier** (`ABC-123`), or a **UUID**; close names resolve by fuzzy match (token-sort-ratio, threshold 60). The authenticated user can be referenced as `me` wherever an assignee is expected.
+Every resource argument accepts a **name**, an **identifier** (`ABC-123`), or a **UUID**; close names resolve by fuzzy match (token-sort-ratio, threshold 60). The authenticated user can be referenced as `me` wherever an assignee is expected; under a service-principal token `me` resolves to that principal's **shadow bot workspace member** (see [pbot whoami](#pbot-whoami)).
+
+A lookup that spans projects (`wi show`, `wi ls` without `-p`) **skips** a project the credential cannot read — HTTP 403, which is what a service principal sees on every project it has no grant for, or 404 — and warns which projects were skipped, instead of failing the whole lookup on the first one. Only the work-item read of a project decides that skip: a denial on the project's states or labels is a different failure and aborts the command rather than being reported as "no read access" to a project whose items were readable. Any other failure (a rejected credential, a 5xx) still aborts too; a `wi show` that then matches nothing lists the projects the search could not cover in its hint.
 
 Human-readable tables are written to **stderr**, machine-readable JSON to **stdout**, so `pbot ... --json 2>/dev/null` always yields clean JSON. Reads are cached on disk; writes invalidate the affected resource and, where the API can silently ignore a write (dates, triage, uploads), the result is verified by reading it back.
 
@@ -81,6 +83,53 @@ Show the authenticated user.
 ```
 pbot whoami [--json]
 ```
+
+`--json` prints the raw `/api/v1/users/me/` payload. The table's `name` row says which kind of
+credential is in use: a **human** account prints its plain name, a **service principal** prints
+`<name> (service principal)` — a token issued for a bot, with no person fields to show — or
+`<name> (SP owned by <owner>)` when the payload names the owning human.
+
+**Why the owner is usually absent.** `/api/v1/users/me/` deliberately never serializes the owner's
+profile: a service principal is not allowed to read the human who owns it, and that is a server-side
+permission decision, not a client limitation. The owner is therefore read forward-compatibly — the
+marker above appears only if the payload ever carries an `owner` (object or name) or `owner_name`
+field. The session-only `/api/workspaces/<slug>/service-principals/` endpoint does return `owner`,
+but it rejects a service-principal token (403), so the CLI does not probe it.
+
+### `me` under a service principal
+
+`me` resolves to the credential's **shadow bot workspace member**: the `User` row Plane credits the
+principal's writes to, listed by `pbot user ls` as `svc-<name> (bot)`. This matters because a
+service principal answers `/users/me/` with its `ServicePrincipal.id`, which is **not** a member id —
+assigning it does nothing and filtering on it returns nothing. `me` never sends that id to the API.
+
+Every service-principal `me` result says what it resolved to, so an unattended caller can act
+without reading the source:
+
+- Every write made with `--assignee me` — `wi assign`, `wi create`, `wi update` — prints, once the
+  write has landed,
+  `Work item assigned to <name> (service principal) as its shadow bot member '<member name>' (member id <uuid>).`
+  `<member name>` is the matched row's `display_name` (the field `pbot user ls --json` reports, and
+  what `pbot user ls`'s table shows for a row that has one), so the member can be
+  found from the message.
+- `wi ls --assignee me` with no matching rows prints a note naming the principal, the shadow bot
+  member and its id, and the next command to run (`pbot wi ls -p <project> --assignee '<member name or uuid>'`,
+  members listed by `pbot user ls`).
+- When no shadow bot member exists, `me` fails (exit 3) with a hint naming `pbot user ls` instead of
+  handing back an id that would be silently ignored.
+- If the workspace member list itself cannot be read, `wi ls --assignee` with a name or `me` fails
+  (exit 3) with a hint naming `pbot user ls` — the filter cannot be answered without the list, and
+  dropping the filter would return rows nobody asked for — while an explicit member id still filters,
+  because there the list only supplies the display name.
+- A plain listing still runs either way: for it the member list is enrichment, so the assignee column
+  falls back to the member id's first 8 characters and a warning says which call was denied —
+  `warning: could not read the workspace member list (…); assignee names will show the member id's
+  first 8 characters — check access with 'pbot user ls'`. The list is only read when it will be used:
+  a listing with no `--assignee` whose rows carry no assignees makes no member request and prints no
+  warning.
+
+A human credential's `me` output is unchanged: it resolves to the account's own member id, and an
+explicit name or UUID never prints an identity note.
 
 ## pbot configure
 

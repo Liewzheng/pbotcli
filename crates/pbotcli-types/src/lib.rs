@@ -27,6 +27,16 @@ pub struct User {
     /// see the API's own name.
     #[serde(rename = "type")]
     pub kind: Option<String>,
+    /// The human a service principal belongs to, if the payload names one.
+    ///
+    /// The v1 `/users/me/` payload does **not** carry this today: the server
+    /// deliberately never serializes the owner's profile. It is read
+    /// forward-compatibly so `whoami` prints `name (SP owned by <owner>)` the
+    /// day the server adds it. Polymorphic like the work-item fields — a name
+    /// string (also accepted as `owner_name`) or an owner object — and omitted
+    /// from `--json` when absent, so a human payload serializes as before.
+    #[serde(default, alias = "owner_name", skip_serializing_if = "Option::is_none")]
+    pub owner: Option<Value>,
     pub display_name: Option<String>,
     pub first_name: Option<String>,
     pub last_name: Option<String>,
@@ -68,6 +78,67 @@ impl User {
         self.kind.as_deref() == Some("service_principal")
     }
 
+    /// The identity as `whoami` shows it and as error messages name it.
+    ///
+    /// A person renders as their name, unchanged. A service principal carries an
+    /// explicit marker, because the bare name looks like a credential that
+    /// failed to load: `name (SP owned by <owner>)` when the payload supplies an
+    /// owner name, `name (service principal)` when it does not.
+    pub fn identity_label(&self) -> String {
+        if !self.is_service_principal() {
+            return self.display_label();
+        }
+        let name = self.display_label();
+        match self.owner_label() {
+            Some(owner) => format!("{name} (SP owned by {owner})"),
+            None => format!("{name} (service principal)"),
+        }
+    }
+
+    /// The owner's name, when the payload names one.
+    ///
+    /// Accepts an owner object (`display_name` or `name`, else a complete
+    /// `first_name` + `last_name` pair) or a plain string. An id and an address
+    /// are both rejected: a UUID-shaped string is an *id*, not a name, and an
+    /// address-shaped one is an email, which `whoami` does not print. A pair with
+    /// a blank or address-shaped half is rejected whole rather than yielding half
+    /// a name. Either way this returns `None` and `identity_label` degrades to the
+    /// plain marker rather than claiming "owned by 17af336a-…", and the raw payload
+    /// stays available in `--json`.
+    pub fn owner_label(&self) -> Option<String> {
+        let owner = self.owner.as_ref()?;
+        if let Some(raw) = owner.as_str() {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() || is_uuid(trimmed) || is_email(trimmed) {
+                return None;
+            }
+            return Some(trimmed.to_string());
+        }
+        let obj = owner.as_object()?;
+        let keyed = ["display_name", "name"].iter().find_map(|key| {
+            obj.get(*key)
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty() && !is_uuid(s) && !is_email(s))
+        });
+        if let Some(name) = keyed {
+            return Some(name.to_string());
+        }
+        // A pair names the human only when both halves are present and clean:
+        // half a name invented from a payload that leaves one half blank or puts
+        // an address in it would be worse than the plain marker.
+        let name_part = |key: &str| {
+            obj.get(key)
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty() && !is_uuid(s) && !is_email(s))
+        };
+        match (name_part("first_name"), name_part("last_name")) {
+            (Some(first), Some(last)) => Some(format!("{first} {last}")),
+            _ => None,
+        }
+    }
+
     /// True when the server sent at least one person field.
     pub fn has_person_fields(&self) -> bool {
         [
@@ -80,6 +151,29 @@ impl User {
         .flatten()
         .any(|s| !s.is_empty())
     }
+}
+
+/// The canonical `8-4-4-4-12` hex UUID shape check, shared by the query parser
+/// in `pbotcli-resolve` (which re-exports it) and by the identity checks here.
+pub fn is_uuid(s: &str) -> bool {
+    const LENGTHS: [usize; 5] = [8, 4, 4, 4, 12];
+    let parts: Vec<&str> = s.split('-').collect();
+    parts.len() == LENGTHS.len()
+        && parts
+            .iter()
+            .zip(LENGTHS)
+            .all(|(part, len)| part.len() == len && part.chars().all(|c| c.is_ascii_hexdigit()))
+}
+
+/// Whether a string is an email address rather than a name: a local part, `@`,
+/// and a host carrying a dot. Deliberately coarse — the check only has to keep an
+/// address out of a displayed name, not validate one — but narrow enough that a
+/// legitimate name containing `@` (`Jicai @ Islet`) still labels the owner.
+fn is_email(s: &str) -> bool {
+    let Some((local, host)) = s.split_once('@') else {
+        return false;
+    };
+    !local.trim().is_empty() && host.contains('.') && !host.starts_with('.')
 }
 
 /// A member row of `/api/v1/workspaces/{ws}/members/`.
@@ -110,6 +204,69 @@ impl Member {
             self.display_name.clone().unwrap_or_default()
         }
     }
+
+    /// True when this member row is the shadow bot user of the service
+    /// principal named `sp_name`.
+    ///
+    /// Plane credits every service-principal write to a *shadow bot* `User`
+    /// (`apps/api/plane/service_principals/attribution.py`): `bot_display_name`
+    /// is `svc-<name> (bot)`, `bot_first_name` is `svc-<name>`, `last_name` is
+    /// `Bot`. That user's id — not the `ServicePrincipal.id` `whoami` prints —
+    /// is the one an assignment has to carry, which is why `--assignee me`
+    /// under an SP used to match nothing.
+    ///
+    /// A row matches only when a name field both carries the bot composition
+    /// (`svc-` prefix or `(bot)` marker) *and* normalises to the SP's name, so
+    /// the server's rule is matched tolerantly (a deployment that sends the
+    /// bare SP name in `first_name` still matches through `display_name`)
+    /// without a bare name being enough. A human member who happens to share
+    /// the principal's name must not be resolved as its bot: the miss is loud
+    /// (the caller reports "no shadow bot member" plus the command that lists
+    /// members) while a wrong match would silently write to the wrong person.
+    pub fn matches_service_principal(&self, sp_name: &str) -> bool {
+        // The principal's own name is compared as it is (trimmed, lowercased):
+        // only the member's name carries a composition to strip, and stripping
+        // it off the principal too would lose a principal whose name itself
+        // starts with `svc-`.
+        let target = sp_name.trim().to_lowercase();
+        if target.is_empty() {
+            return false;
+        }
+        [self.display_name.as_deref(), self.first_name.as_deref()]
+            .into_iter()
+            .flatten()
+            .any(|candidate| has_bot_marker(candidate) && normalize_bot_name(candidate) == target)
+    }
+}
+
+/// Lowercase, trim, and strip the bot composition (`svc-` prefix, `(bot)`
+/// suffix) so the server's composed names and a bare SP name compare equal.
+///
+/// Only the parenthesised marker is stripped: a bare `bot` suffix would eat
+/// into the SP's own name (`kimicode-bot` → `kimicode`), which is exactly the
+/// name this has to match.
+fn normalize_bot_name(s: &str) -> String {
+    let mut out = s.trim().to_lowercase();
+    if let Some(rest) = out.strip_prefix("svc-") {
+        out = rest.trim().to_string();
+    }
+    if let Some(rest) = out.strip_suffix("(bot)") {
+        out = rest.trim_end_matches([' ', '.', '-']).trim().to_string();
+    }
+    out
+}
+
+/// Whether a raw name carries the bot composition the server stamps onto a
+/// shadow bot user. Only a *match* is strengthened by this; it never decides
+/// one on its own.
+///
+/// The suffix test mirrors [`normalize_bot_name`], which strips a trailing
+/// `(bot)` only: a `(bot)` in the middle of a name is not the composition, and
+/// accepting it here would let a marker that cannot be stripped strengthen a
+/// match it does not describe.
+fn has_bot_marker(s: &str) -> bool {
+    let lower = s.trim().to_lowercase();
+    lower.starts_with("svc-") || lower.ends_with("(bot)")
 }
 
 /// A project as returned by the projects endpoints.
@@ -569,5 +726,237 @@ mod tests {
             user(r#"{"id":"u6","name":"lonely-bot"}"#).display_label(),
             "lonely-bot"
         );
+    }
+
+    #[test]
+    fn service_principal_identity_label_marks_the_kind() {
+        // No owner in the payload (what the server sends today) → explicit marker.
+        let sp = user(r#"{"id":"sp1","name":"kimicode-bot","type":"service_principal"}"#);
+        assert_eq!(sp.identity_label(), "kimicode-bot (service principal)");
+    }
+
+    #[test]
+    fn service_principal_identity_label_names_the_owner_when_the_payload_has_one() {
+        // Forward-compatible: an owner object naming the human.
+        let sp = user(
+            r#"{"id":"sp1","name":"kimicode-bot","type":"service_principal",
+                "owner":{"id":"u1","display_name":"Jicai Liu","first_name":"Jicai"}}"#,
+        );
+        assert_eq!(sp.identity_label(), "kimicode-bot (SP owned by Jicai Liu)");
+        // ... and the `owner_name` string alias.
+        let sp = user(
+            r#"{"id":"sp1","name":"kimicode-bot","type":"service_principal","owner_name":"Jicai Liu"}"#,
+        );
+        assert_eq!(sp.identity_label(), "kimicode-bot (SP owned by Jicai Liu)");
+        // An owner object with only a first/last pair still names the human.
+        let sp = user(
+            r#"{"id":"sp1","name":"b","type":"service_principal","owner":{"first_name":"Jicai","last_name":"Liu"}}"#,
+        );
+        assert_eq!(sp.identity_label(), "b (SP owned by Jicai Liu)");
+    }
+
+    #[test]
+    fn owner_that_is_only_a_uuid_is_not_a_name() {
+        // The SP-list endpoint answers with the owner's UUID. A UUID is not a
+        // name, so the label degrades instead of claiming "owned by 17af…".
+        let uuid = "17af336a-126d-4f0f-a067-25e7d90a2d78";
+        let sp = user(&format!(
+            r#"{{"id":"sp1","name":"kimicode-bot","type":"service_principal","owner":"{uuid}"}}"#
+        ));
+        assert_eq!(sp.owner_label(), None);
+        assert_eq!(sp.identity_label(), "kimicode-bot (service principal)");
+        let sp = user(&format!(
+            r#"{{"id":"sp1","name":"kimicode-bot","type":"service_principal","owner":{{"id":"{uuid}"}}}}"#
+        ));
+        assert_eq!(sp.identity_label(), "kimicode-bot (service principal)");
+    }
+
+    #[test]
+    fn owner_email_is_not_taken_as_a_name() {
+        // The owner's address is not a name, and `whoami` is not the place to
+        // print it: the raw payload stays available in `--json`.
+        let sp = user(
+            r#"{"id":"sp1","name":"kimicode-bot","type":"service_principal","owner":{"id":"u1","email":"j@example.com"}}"#,
+        );
+        assert_eq!(sp.owner_label(), None);
+        assert_eq!(sp.identity_label(), "kimicode-bot (service principal)");
+        // ... in the object's name fields too.
+        for owner in [
+            r#"{"name":"j@example.com"}"#,
+            r#"{"display_name":"j@example.com"}"#,
+            r#"{"first_name":"j@example.com","last_name":"y@example.com"}"#,
+        ] {
+            let sp = user(&format!(
+                r#"{{"id":"sp1","name":"kimicode-bot","type":"service_principal","owner":{owner}}}"#
+            ));
+            assert_eq!(sp.owner_label(), None, "owner {owner} must not name anyone");
+            assert_eq!(sp.identity_label(), "kimicode-bot (service principal)");
+        }
+        // An address in one half invalidates the pair rather than contributing
+        // half a name: the marker degrades, nothing is invented.
+        for owner in [
+            r#"{"first_name":"j@example.com","last_name":"Liu"}"#,
+            r#"{"first_name":"Jicai","last_name":"j@example.com"}"#,
+            // A blank half is not a name either.
+            r#"{"first_name":"Jicai","last_name":""}"#,
+            r#"{"first_name":"","last_name":"Liu"}"#,
+        ] {
+            let sp = user(&format!(
+                r#"{{"id":"sp1","name":"kimicode-bot","type":"service_principal","owner":{owner}}}"#
+            ));
+            assert_eq!(sp.owner_label(), None, "owner {owner} must not name anyone");
+        }
+        // A complete, clean pair still names the human.
+        let sp = user(
+            r#"{"id":"sp1","name":"kimicode-bot","type":"service_principal","owner":{"first_name":"Jicai","last_name":"Liu"}}"#,
+        );
+        assert_eq!(sp.owner_label(), Some("Jicai Liu".to_string()));
+        // ... and in the string form, `owner` and its `owner_name` alias alike.
+        for key in ["owner", "owner_name"] {
+            for address in ["j@example.com", "j@example.com."] {
+                let sp = user(&format!(
+                    r#"{{"id":"sp1","name":"kimicode-bot","type":"service_principal","{key}":"{address}"}}"#
+                ));
+                assert_eq!(
+                    sp.owner_label(),
+                    None,
+                    "{key}={address} must not name anyone"
+                );
+                assert_eq!(sp.identity_label(), "kimicode-bot (service principal)");
+            }
+        }
+    }
+
+    #[test]
+    fn owner_name_containing_an_at_sign_still_names_the_owner() {
+        // A name is not an address: only a local part `@` dotted host is refused,
+        // so a genuine name survives instead of degrading silently.
+        for owner in [
+            r#""Jicai @ Islet""#,
+            r#""Jicai@Islet""#,
+            r#""Jicai@Islet Workstation""#,
+            r#""@Islet""#,
+            r#""Jicai @""#,
+        ] {
+            let sp = user(&format!(
+                r#"{{"id":"sp1","name":"kimicode-bot","type":"service_principal","owner":{owner}}}"#
+            ));
+            let expected = owner.trim_matches('"').to_string();
+            assert_eq!(sp.owner_label(), Some(expected.clone()), "owner {owner}");
+            assert_eq!(
+                sp.identity_label(),
+                format!("kimicode-bot (SP owned by {expected})")
+            );
+        }
+    }
+
+    #[test]
+    fn human_identity_label_and_json_are_unchanged() {
+        let raw = r#"{"id":"u1","display_name":"Jicai Liu","first_name":"Jicai","last_name":"Liu","email":"j@x"}"#;
+        let me = user(raw);
+        assert_eq!(me.identity_label(), me.display_label());
+        assert_eq!(me.identity_label(), "Jicai Liu");
+        // The added field is skipped when absent, so `whoami --json` for a
+        // human credential keeps its exact shape.
+        let value = serde_json::to_value(&me).expect("serializes");
+        assert!(value.get("owner").is_none(), "{value}");
+        assert_eq!(value["display_name"], "Jicai Liu");
+    }
+
+    #[test]
+    fn an_owner_field_on_a_human_payload_is_additive_only() {
+        // The field is read for whatever the server sends, so a human payload
+        // that carried one would echo it in `--json` — an extra key, not a
+        // changed one. The rendered identity stays the plain human name.
+        let me =
+            user(r#"{"id":"u1","display_name":"Jicai Liu","type":"user","owner":"Jicai Liu"}"#);
+        assert_eq!(me.identity_label(), "Jicai Liu");
+        let value = serde_json::to_value(&me).expect("serializes");
+        assert_eq!(value["owner"], "Jicai Liu");
+        assert_eq!(value["display_name"], "Jicai Liu");
+        // Without the field — what `/users/me/` sends today — the key is absent.
+        let value = serde_json::to_value(user(r#"{"id":"u1","display_name":"Jicai Liu"}"#))
+            .expect("serializes");
+        assert!(value.get("owner").is_none(), "{value}");
+    }
+
+    fn member(json: &str) -> Member {
+        serde_json::from_str(json).expect("valid member json")
+    }
+
+    #[test]
+    fn shadow_bot_matching_follows_the_server_composition() {
+        // server composition: display_name = "svc-<name> (bot)", first_name = "svc-<name>"
+        let bot = member(
+            r#"{"id":"e25ef580","display_name":"svc-deploy-bot (bot)","first_name":"svc-deploy-bot","last_name":"Bot"}"#,
+        );
+        assert!(bot.matches_service_principal("deploy-bot"));
+        // The live shape: the display name carries the composition while
+        // `first_name` is the bare SP name.
+        let live = member(
+            r#"{"id":"e25ef580","display_name":"svc-Kimicode IsletspaceWorkstation (bot)","first_name":"Kimicode IsletspaceWorkstation"}"#,
+        );
+        assert!(live.matches_service_principal("Kimicode IsletspaceWorkstation"));
+        // The composition may also be carried by `first_name` alone.
+        let by_first_name =
+            member(r#"{"id":"e2","display_name":"Deploy bot","first_name":"svc-deploy-bot"}"#);
+        assert!(by_first_name.matches_service_principal("deploy-bot"));
+        // Unrelated members never match.
+        let human = member(r#"{"id":"17af336a","display_name":"Jicai.Liu","first_name":"Jicai"}"#);
+        assert!(!human.matches_service_principal("deploy-bot"));
+    }
+
+    #[test]
+    fn a_bare_name_equal_to_the_principal_is_not_a_shadow_bot_match() {
+        // A human member who happens to share the SP's name must not be
+        // resolved as its bot: a wrong match would silently assign work to the
+        // wrong person, while a miss reports "no shadow bot member" loudly.
+        let human = member(r#"{"id":"u2","display_name":"Deploy Bot","first_name":"deploy-bot"}"#);
+        assert!(!human.matches_service_principal("deploy-bot"));
+    }
+
+    #[test]
+    fn shadow_bot_matching_keeps_a_name_that_ends_in_bot() {
+        // Stripping a bare trailing "bot" would have turned the target into
+        // "kimicode" and matched nothing.
+        let bot = member(
+            r#"{"id":"e1","display_name":"svc-kimicode-bot (bot)","first_name":"svc-kimicode-bot"}"#,
+        );
+        assert!(bot.matches_service_principal("kimicode-bot"));
+    }
+
+    #[test]
+    fn shadow_bot_matching_ignores_a_mid_string_bot_marker() {
+        // `has_bot_marker` and `normalize_bot_name` must agree: only a trailing
+        // `(bot)` is the composition, so a name that merely contains one is not a
+        // shadow bot row.
+        let impostor = member(
+            r#"{"id":"u1","display_name":"deploy (bot) bot","first_name":"deploy (bot) bot"}"#,
+        );
+        assert!(!impostor.matches_service_principal("deploy (bot) bot"));
+        // The composition itself still matches through both fields.
+        let bot = member(
+            r#"{"id":"e1","display_name":"svc-deploy (bot) bot (bot)","first_name":"svc-deploy (bot) bot"}"#,
+        );
+        assert!(bot.matches_service_principal("deploy (bot) bot"));
+    }
+
+    #[test]
+    fn shadow_bot_matching_rejects_an_empty_name() {
+        // A blank SP name must not match every member whose name normalises to "".
+        let blank = member(r#"{"id":"u3","display_name":"Bot","first_name":""}"#);
+        assert!(!blank.matches_service_principal(""));
+        assert!(!blank.matches_service_principal("   "));
+    }
+
+    #[test]
+    fn shadow_bot_matching_keeps_a_principal_name_that_starts_with_svc() {
+        // Only the member's name carries a composition to strip: stripping it
+        // off the principal too would turn "svc-thing" into "thing" and match
+        // nothing.
+        let bot = member(
+            r#"{"id":"e1","display_name":"svc-svc-thing (bot)","first_name":"svc-svc-thing"}"#,
+        );
+        assert!(bot.matches_service_principal("svc-thing"));
     }
 }
