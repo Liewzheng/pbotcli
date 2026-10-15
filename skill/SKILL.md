@@ -4,16 +4,16 @@ description: "Manage Plane.so through the pbot / pbotcli CLI — work items, pro
 allowed-tools: Bash(pbot *, pbotcli *)
 metadata:
   author: pbotcli maintainers
-  version: "1.5.3"
+  version: "1.5.1"
 ---
 
 # pbot — pbotcli
 
-> **Skill version: 1.5.3 — must match `pbot --version`.** A stale skill is
+> **Skill version: 1.5.1 — must match `pbot --version`.** A stale skill is
 > worse than no skill: every command and flag listed below may have been
 > added, renamed or removed since this was written. Before answering any
 > `pbot …` question, verify the version with `pbot --version`. If it differs
-> from `1.5.3`, this document is stale:
+> from `1.5.1`, this document is stale:
 >
 > - End users: `brew upgrade pbotcli` (or `brew install Liewzheng/tap/pbotcli`
 >   the first time), or the prebuilt installer from the Releases page, then

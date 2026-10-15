@@ -787,7 +787,7 @@ dependencies = [
 
 [[package]]
 name = "pbotcli-cache"
-version = "1.5.3"
+version = "1.5.1"
 dependencies = [
  "dirs",
  "serde",
@@ -796,7 +796,7 @@ dependencies = [
 
 [[package]]
 name = "pbotcli-cli"
-version = "1.5.3"
+version = "1.5.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -815,7 +815,7 @@ dependencies = [
 
 [[package]]
 name = "pbotcli-client"
-version = "1.5.3"
+version = "1.5.1"
 dependencies = [
  "anyhow",
  "mockito",
@@ -830,7 +830,7 @@ dependencies = [
 
 [[package]]
 name = "pbotcli-core"
-version = "1.5.3"
+version = "1.5.1"
 dependencies = [
  "anyhow",
  "dirs",
@@ -840,7 +840,7 @@ dependencies = [
 
 [[package]]
 name = "pbotcli-format"
-version = "1.5.3"
+version = "1.5.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -849,7 +849,7 @@ dependencies = [
 
 [[package]]
 name = "pbotcli-html"
-version = "1.5.3"
+version = "1.5.1"
 dependencies = [
  "html-escape",
  "regex",
@@ -857,7 +857,7 @@ dependencies = [
 
 [[package]]
 name = "pbotcli-resolve"
-version = "1.5.3"
+version = "1.5.1"
 dependencies = [
  "pbotcli-client",
  "pbotcli-core",
@@ -869,7 +869,7 @@ dependencies = [
 
 [[package]]
 name = "pbotcli-types"
-version = "1.5.3"
+version = "1.5.1"
 dependencies = [
  "serde",
  "serde_json",
