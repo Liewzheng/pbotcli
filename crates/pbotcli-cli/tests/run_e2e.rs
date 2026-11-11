@@ -41,10 +41,15 @@ const TC_CASES: &str = r#"{"results":[{"id":"tc1","number":"TC-CLI-007","module"
 const RUN: &str = r#"{"id":"r1","number":"RUN-20261109-01","run_date":"2026-11-09","version_number":"1.2.3","build_number":"42","commit_hash":"abc1234","environment":"bench","executed_by":"u1","executed_by_name":"Bot","status":"in_progress","retest_of":null,"retest_of_number":null,"cases":[{"id":"rc1","test_case":"tc1","case_number":"TC-CLI-007","case_module_code":"CLI","case_title":"Log in with a valid account","case_purpose":"Make sure the login path works","case_object_overview":"The login form","case_priority":"P1","case_preconditions":"The account exists","case_environment":"Windows 10","conclusion":"","evidence":"","remarks":"","actual_result_summary":"","na_reason":"","na_criteria_source":"","manual_executor":"","manual_condition":"","steps":[{"id":"s1","sequence_id":3,"action_snapshot":"Log in","expected_result_snapshot":"The dashboard is shown","conclusion":"unset","actual_value":"","attachments":[]}],"attachments":[],"created_at":"2026-11-10T08:29:37Z","updated_at":"2026-11-10T08:29:37Z"}],"created_at":"2026-11-09T08:29:37Z","updated_at":"2026-11-09T08:29:37Z","created_by":{"id":"u1","display_name":"Bot","first_name":"B","last_name":""}}"#;
 const RUN_CASES: &str = r#"[{"id":"rc1","test_case":"tc1","case_number":"TC-CLI-007","case_module_code":"CLI","case_title":"Log in with a valid account","case_purpose":"Make sure the login path works","case_object_overview":"The login form","case_priority":"P1","case_preconditions":"The account exists","case_environment":"Windows 10","conclusion":"","evidence":"","remarks":"","actual_result_summary":"","na_reason":"","na_criteria_source":"","manual_executor":"","manual_condition":"","steps":[{"id":"s1","sequence_id":3,"action_snapshot":"Log in","expected_result_snapshot":"The dashboard is shown","conclusion":"unset","actual_value":"","attachments":[]}],"attachments":[],"created_at":"2026-11-10T08:29:37Z","updated_at":"2026-11-10T08:29:37Z"}]"#;
 
-/// The batches of the project, as the list endpoint hands them out.
-const RUN_LIST: &str = r#"{"results":[{"id":"r1","number":"RUN-20261109-01","run_date":"2026-11-09","version_number":"1.2.3","build_number":"42","commit_hash":"abc1234","environment":"bench","executed_by":"u1","executed_by_name":"Bot","status":"in_progress","retest_of":null,"retest_of_number":null,"cases":[],"created_at":"2026-11-09T08:29:37Z","updated_at":"2026-11-09T08:29:37Z"}],"next_cursor":null,"next_page_results":false}"#;
 /// The batch before a case was added to it.
 const RUN_WITHOUT_CASES: &str = r#"{"id":"r1","number":"RUN-20261109-01","run_date":"2026-11-09","version_number":"1.2.3","build_number":"42","commit_hash":"abc1234","environment":"bench","executed_by":"u1","executed_by_name":"Bot","status":"in_progress","retest_of":null,"retest_of_number":null,"cases":[],"created_at":"2026-11-09T08:29:37Z","updated_at":"2026-11-09T08:29:37Z"}"#;
+
+/// The batches of the project: one of them re-tests another one.
+const RUN_LIST_WITH_RETEST: &str = r#"{"results":[{"id":"r1","number":"RUN-20261109-01","run_date":"2026-11-09","version_number":"1.2.3","build_number":"42","commit_hash":"abc1234","environment":"bench","executed_by":"u1","executed_by_name":"Bot","status":"in_progress","retest_of":null,"retest_of_number":null,"cases":[],"created_at":"2026-11-09T08:29:37Z","updated_at":"2026-11-09T08:29:37Z"},{"id":"r0","number":"RUN-20261108-02","run_date":"2026-11-08","version_number":"1.2.2","build_number":"41","commit_hash":"def5678","environment":"bench","executed_by":"u1","executed_by_name":"Bot","status":"completed","retest_of":null,"retest_of_number":null,"cases":[],"created_at":"2026-11-08T08:29:37Z","updated_at":"2026-11-08T08:29:37Z"}],"next_cursor":null,"next_page_results":false}"#;
+/// The batch a re-test re-tests.
+const RUN_ORIGINAL: &str = r#"{"id":"r0","number":"RUN-20261108-02","run_date":"2026-11-08","version_number":"1.2.2","build_number":"41","commit_hash":"def5678","environment":"bench","executed_by":"u1","executed_by_name":"Bot","status":"completed","retest_of":null,"retest_of_number":null,"cases":[],"created_at":"2026-11-08T08:29:37Z","updated_at":"2026-11-08T08:29:37Z"}"#;
+/// A batch that re-tests another one.
+const RUN_RETEST: &str = r#"{"id":"r1","number":"RUN-20261109-01","run_date":"2026-11-09","version_number":"1.2.3","build_number":"42","commit_hash":"abc1234","environment":"bench","executed_by":"u1","executed_by_name":"Bot","status":"in_progress","retest_of":"r0","retest_of_number":"RUN-20261108-02","cases":[],"created_at":"2026-11-09T08:29:37Z","updated_at":"2026-11-09T08:29:37Z"}"#;
 
 /// The reads every `run` command makes before it touches the feature.
 ///
@@ -77,7 +82,7 @@ fn mock_run_reads(server: &mut Server, run_body: &str) {
         .match_query(Matcher::Any)
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(RUN_LIST)
+        .with_body(RUN_LIST_WITH_RETEST)
         .create();
     server
         .mock("GET", "/api/v1/workspaces/ws/projects/p1/test-runs/r1/")
@@ -613,7 +618,7 @@ fn a_duplicate_that_arrives_as_a_conflict_reads_like_the_same_reason() {
         .match_query(Matcher::Any)
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(RUN_LIST)
+        .with_body(RUN_LIST_WITH_RETEST)
         .create();
     server
         .mock("GET", "/api/v1/workspaces/ws/projects/p1/test-runs/r1/")
@@ -652,6 +657,11 @@ fn a_duplicate_that_arrives_as_a_conflict_reads_like_the_same_reason() {
     let err = stderr_of(&out);
     assert!(err.contains("duplicate_case_number"), "{err}");
     assert!(err.contains("同一个用例在批次中重复出现"), "{err}");
+    // The server names the field and not the case: the re-read of the
+    // batch is the only source of the number of the case that is
+    // already in it. Without it the error does not name the case.
+    assert!(err.contains("TC-CLI-007"), "{err}");
+    assert!(err.contains("RUN-20261109-01"), "{err}");
 }
 
 #[test]
@@ -1256,4 +1266,132 @@ fn the_whole_flow_of_a_batch_runs_from_the_create_to_the_summary() {
     let parsed: serde_json::Value = serde_json::from_str(&stdout_of(&out)).expect("valid JSON");
     assert_eq!(parsed["total"], 1);
     assert_eq!(parsed["fail"], 1);
+}
+
+#[test]
+fn run_show_marks_the_batch_it_re_tests() {
+    let mut server = Server::new();
+    server
+        .mock("GET", "/api/v1/workspaces/ws/projects/")
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(PROJECTS)
+        .create();
+    server
+        .mock("GET", "/api/v1/workspaces/ws/projects/p1/test-runs/")
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(RUN_LIST_WITH_RETEST)
+        .create();
+    server
+        .mock("GET", "/api/v1/workspaces/ws/projects/p1/test-runs/r1/")
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(RUN_RETEST)
+        .create();
+
+    let out = run(
+        &["run", "show", "RUN-20261109-01", "-p", "Demo", "--no-cache"],
+        &server.url(),
+    );
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    // The marker names the original batch. The CLI speaks English, so
+    // the marker is English as well — the label of the web UI is not
+    // copied into the output.
+    let err = stderr_of(&out);
+    assert!(err.contains("retest of RUN-20261108-02"), "{err}");
+}
+
+#[test]
+fn run_ls_shows_the_batch_it_re_tests() {
+    let mut server = Server::new();
+    server
+        .mock("GET", "/api/v1/workspaces/ws/projects/")
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(PROJECTS)
+        .create();
+    server
+        .mock("GET", "/api/v1/workspaces/ws/projects/p1/test-runs/")
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"results":[{"id":"r1","number":"RUN-20261109-01","run_date":"2026-11-09","version_number":"1.2.3","build_number":"42","commit_hash":"abc1234","environment":"bench","executed_by":"u1","executed_by_name":"Bot","status":"in_progress","retest_of":"r0","retest_of_number":"RUN-20261108-02","cases":[]}],"next_cursor":null,"next_page_results":false}"#,
+        )
+        .create();
+
+    let out = run(&["run", "ls", "-p", "Demo", "--no-cache"], &server.url());
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let err = stderr_of(&out);
+    // The list has a column of its own for the re-test.
+    assert!(err.contains("Retest of"), "{err}");
+    assert!(err.contains("retest of RUN-20261108-02"), "{err}");
+}
+
+#[test]
+fn run_create_with_a_retest_of_sends_the_original_batch() {
+    let mut server = Server::new();
+    mock_run_reads(&mut server, RUN);
+    // The original batch is resolved by its number …
+    server
+        .mock("GET", "/api/v1/workspaces/ws/projects/p1/test-runs/")
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(RUN_LIST_WITH_RETEST)
+        .create();
+    server
+        .mock("GET", "/api/v1/workspaces/ws/projects/p1/test-runs/r0/")
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(RUN_ORIGINAL)
+        .create();
+    // … and the create carries its uuid, not its number.
+    let create = server
+        .mock("POST", "/api/v1/workspaces/ws/projects/p1/test-runs/")
+        .match_body(Matcher::Json(serde_json::json!({
+            "run_date": "2026-11-09",
+            "version_number": "1.2.3",
+            "build_number": "42",
+            "commit_hash": "abc1234",
+            "environment": "bench",
+            "executed_by": "u1",
+            "retest_of": "r0",
+        })))
+        .with_status(201)
+        .with_header("content-type", "application/json")
+        .with_body(RUN)
+        .create();
+
+    let out = run(
+        &[
+            "run",
+            "create",
+            "-p",
+            "Demo",
+            "--version",
+            "1.2.3",
+            "--build",
+            "42",
+            "--commit",
+            "abc1234",
+            "--env",
+            "bench",
+            "--run-date",
+            "2026-11-09",
+            "--retest-of",
+            "RUN-20261108-02",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    create.assert();
 }

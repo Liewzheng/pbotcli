@@ -325,15 +325,16 @@ pub fn test_case_step_view(step: &TestCaseStep) -> Value {
 
 /// JSON view of one link between a case and a work item.
 ///
-/// The add of a link and the list of the links answer the same shape, and
-/// a link that names no work item carries an empty identifier and an
-/// empty name — the same shape the table rows carry.
+/// The add of a link and the list of the links answer the same shape.
+/// A link that names no work item carries `null` for its identifier and
+/// its name — the value types of the `--json` output are a contract
+/// (ADR-0005), so they are not changed into empty strings.
 pub fn test_case_issue_view(link: &TestCaseIssueLink) -> Value {
     json!({
         "id": link.id,
         "issue_id": link.issue_id,
-        "issue_identifier": link.issue_identifier.clone().unwrap_or_default(),
-        "issue_name": link.issue_name.clone().unwrap_or_default(),
+        "issue_identifier": link.issue_identifier,
+        "issue_name": link.issue_name,
     })
 }
 
@@ -761,6 +762,22 @@ mod tests {
         assert!(view["steps"].as_array().unwrap().is_empty());
         assert!(view["issue_links"].as_array().unwrap().is_empty());
         assert_eq!(view["created_by"], "");
+    }
+
+    #[test]
+    fn a_link_that_names_no_work_item_carries_null() {
+        // The value types of the `--json` output are a contract: a link
+        // without a work item answers `null`, not an empty string.
+        let view = test_case_issue_view(&TestCaseIssueLink {
+            id: "l1".into(),
+            issue_id: "wi1".into(),
+            issue_identifier: None,
+            issue_name: None,
+            ..Default::default()
+        });
+        assert!(view["issue_identifier"].is_null(), "{view}");
+        assert!(view["issue_name"].is_null(), "{view}");
+        assert_eq!(view["issue_id"], "wi1");
     }
 
     #[test]

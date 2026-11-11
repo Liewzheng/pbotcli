@@ -421,6 +421,23 @@ async fn resolve_and_confirm(
     Ok((project, found, record))
 }
 
+/// The re-test marker of a batch.
+///
+/// The server keeps the number of the original batch next to the link,
+/// so a caller can show it without a second call. The CLI speaks
+/// English everywhere, so the marker is English as well — the label of
+/// the web UI (「补测：RUN-…」) is not copied into the output.
+fn retest_marker(run: &TestRun) -> String {
+    match run
+        .retest_of_number
+        .as_deref()
+        .filter(|number| !number.is_empty())
+    {
+        Some(number) => format!("retest of {number}"),
+        None => String::new(),
+    }
+}
+
 /// The case record of a batch, by its uuid or its number.
 ///
 /// The batch holds the records of its cases, so the batch itself answers
@@ -451,7 +468,7 @@ fn normalize_step_verdict(value: &str) -> Result<String, PlaneError> {
     Err(PlaneError::validation_with_hint(
         format!("Invalid step verdict '{value}'."),
         format!(
-            "A step carries pass, fail or unset. N/A is a conclusion of a case (`pbot run conclude --conclusion N/A`). Valid values: {}.",
+            "A step carries pass, fail or unset — a step that was not executed is unset. N/A is a conclusion of a case (`pbot run conclude --conclusion N/A`). Valid values: {}.",
             STEP_VERDICTS.join(", ")
         ),
     ))
@@ -506,14 +523,118 @@ impl Evidence {
 ///
 /// The text that is already on the record counts as well — the evidence
 /// may be written before the conclusion.
+///
+/// The rule is the rule of the server (`is_filled_markdown` of
+/// `testcase_validity.py`): the value has to carry a text **of its own**.
+/// A placeholder (`—`, `待补充`, `TBD`, …) carries none, and a value that
+/// holds nothing but an image (`![](shot.png)`) carries none either — a
+/// picture is a file, not a sentence. So the CLI says "the evidence is
+/// missing" exactly when the server will refuse the batch.
 fn evidence_shape(text: Option<&str>, has_file: bool) -> Evidence {
-    let has_text = text.map(|text| !text.trim().is_empty()).unwrap_or(false);
+    let has_text = text.is_some_and(carries_text);
     match (has_text, has_file) {
         (true, true) => Evidence::Both,
         (true, false) => Evidence::Text,
         (false, true) => Evidence::Attachment,
         (false, false) => Evidence::None,
     }
+}
+
+/// The values the server reads as no text at all.
+///
+/// The comparison is on the **whole** value: `—` is a placeholder, while
+/// `— (the device stayed silent)` is an observation.
+const PLACEHOLDERS: [&str; 25] = [
+    "-",
+    "--",
+    "---",
+    "—",
+    "–",
+    ".",
+    "..",
+    "...",
+    "…",
+    "?",
+    "??",
+    "???",
+    "*",
+    "**",
+    "_",
+    "__",
+    "tbd",
+    "todo",
+    "xxx",
+    "待补充",
+    "待填写",
+    "待填",
+    "待定",
+    "暂填",
+    "待确认",
+];
+
+/// True when the text of a value is nothing but a placeholder.
+fn is_placeholder(text: &str) -> bool {
+    let normalized = text.trim().to_lowercase();
+    !normalized.is_empty() && PLACEHOLDERS.contains(&normalized.as_str())
+}
+
+/// The text a Markdown value carries of its own.
+///
+/// The markup is taken away the way the server takes it away: a picture
+/// is a file and carries no text — not even its alt text — and the
+/// destination of a link is not text either: `[text](url)` says `text`.
+/// The emphasis of a text is not what the text says, so `**不一致**`
+/// carries the text `不一致`.
+fn markdown_text(value: &str) -> String {
+    let without_pictures = strip_pictures(value);
+    let without_destinations = strip_destinations(&without_pictures);
+    // The emphasis and the code marks are markup, not text.
+    without_destinations
+        .chars()
+        .filter(|c| !matches!(c, '*' | '_' | '`'))
+        .collect()
+}
+
+/// Remove the pictures: `![alt](url)` is a file, not a sentence.
+fn strip_pictures(value: &str) -> String {
+    let mut text = String::new();
+    let mut rest = value;
+    while let Some(start) = rest.find("![") {
+        text.push_str(&rest[..start]);
+        match rest[start..].find(')') {
+            Some(end) => rest = &rest[start + end + 1..],
+            None => {
+                rest = "";
+                break;
+            }
+        }
+    }
+    text.push_str(rest);
+    text
+}
+
+/// Remove the destination of a link: `[text](url)` says `text`.
+fn strip_destinations(value: &str) -> String {
+    let mut text = String::new();
+    let mut rest = value;
+    while let Some(start) = rest.find("](") {
+        text.push_str(&rest[..start + 1]);
+        match rest[start + 1..].find(')') {
+            Some(end) => rest = &rest[start + 2 + end..],
+            None => {
+                rest = "";
+                break;
+            }
+        }
+    }
+    text.push_str(rest);
+    text
+}
+
+/// True when the value carries a text of its own.
+fn carries_text(value: &str) -> bool {
+    let text = markdown_text(value);
+    !text.trim().is_empty() && !is_placeholder(&text)
 }
 
 /// What the finalize rules still want for a conclusion.
@@ -825,12 +946,21 @@ async fn cmd_run_list(
                     run.status.clone(),
                     run.executed_by_name.clone(),
                     run.cases.len().to_string(),
+                    // A re-test names the batch it re-tests.
+                    retest_marker(run),
                 ]
             })
             .collect();
         output_table(
             &[
-                "Number", "Date", "Version", "Build", "Status", "Executor", "Cases",
+                "Number",
+                "Date",
+                "Version",
+                "Build",
+                "Status",
+                "Executor",
+                "Cases",
+                "Retest of",
             ],
             &rows,
         );
@@ -861,11 +991,9 @@ async fn cmd_run_show(
         vec!["executed_by".to_string(), found.executed_by_name.clone()],
         vec!["status".to_string(), found.status.clone()],
         // The number of the batch this one re-tests — the original
-        // keeps its number even when it is deleted.
-        vec![
-            "retest_of".to_string(),
-            found.retest_of_number.clone().unwrap_or_default(),
-        ],
+        // keeps its number even when it is deleted — marked as the
+        // re-test it is.
+        vec!["retest_of".to_string(), retest_marker(&found)],
         vec!["created_at".to_string(), found.created_at.clone()],
         vec!["updated_at".to_string(), found.updated_at.clone()],
         vec![
@@ -1378,6 +1506,62 @@ mod tests {
     }
 
     #[test]
+    fn a_placeholder_is_no_evidence() {
+        // The server reads a placeholder as no text at all
+        // (`is_placeholder` of `testcase_validity.py`): the CLI has to
+        // read it the same way, or its notice is skipped exactly when
+        // the server refuses the batch.
+        for placeholder in ["—", "待补充", "TBD", "tbd", "...", "???", "xxx", "  —  "] {
+            assert_eq!(
+                evidence_shape(Some(placeholder), false),
+                Evidence::None,
+                "{placeholder} carries no text"
+            );
+        }
+    }
+
+    #[test]
+    fn a_value_that_holds_only_a_picture_is_no_evidence() {
+        // A picture is a file, not a sentence: the inline image carries
+        // no text — not even its alt text.
+        assert_eq!(evidence_shape(Some("![](shot.png)"), false), Evidence::None);
+        assert_eq!(
+            evidence_shape(Some("![a screenshot](shot.png)"), false),
+            Evidence::None
+        );
+        // With a file attached, the attachment is the evidence.
+        assert_eq!(
+            evidence_shape(Some("![](shot.png)"), true),
+            Evidence::Attachment
+        );
+    }
+
+    #[test]
+    fn a_real_text_is_evidence() {
+        // The markup is not what the value says: `**不一致**` carries the
+        // text `不一致`.
+        assert_eq!(
+            evidence_shape(Some("the password was refused"), false),
+            Evidence::Text
+        );
+        assert_eq!(evidence_shape(Some("**不一致**"), false), Evidence::Text);
+        assert_eq!(
+            evidence_shape(Some("`TBD` is not a text"), false),
+            Evidence::Text
+        );
+        // A placeholder with something else in it is an observation.
+        assert_eq!(
+            evidence_shape(Some("— (the device stayed silent)"), false),
+            Evidence::Text
+        );
+        // The text of a link is text; its destination is not.
+        assert_eq!(
+            evidence_shape(Some("[the report](http://x/report.pdf)"), false),
+            Evidence::Text
+        );
+    }
+
+    #[test]
     fn an_empty_evidence_is_no_evidence() {
         // A text that holds nothing but blanks carries no evidence, and
         // a record without one is refused by the finalize.
@@ -1441,6 +1625,27 @@ mod tests {
         // February has 29 days that year.
         assert_eq!(civil_from_days(19_723), (2024, 1, 1));
         assert_eq!(civil_from_days(19_782), (2024, 2, 29));
+    }
+
+    #[test]
+    fn the_re_test_marker_names_the_original_batch() {
+        let batch = TestRun {
+            retest_of: Some("r0".into()),
+            retest_of_number: Some("RUN-20261108-02".into()),
+            ..Default::default()
+        };
+        // The marker is English: the CLI speaks English everywhere, and
+        // the label of the web UI is not copied into the output.
+        assert_eq!(retest_marker(&batch), "retest of RUN-20261108-02");
+        // A batch that re-tests nothing carries no marker.
+        assert_eq!(retest_marker(&TestRun::default()), "");
+        assert_eq!(
+            retest_marker(&TestRun {
+                retest_of_number: Some(String::new()),
+                ..Default::default()
+            }),
+            ""
+        );
     }
 
     #[test]
