@@ -394,6 +394,33 @@ async fn require_project(
     resolve_project(project, client).await
 }
 
+/// The batch and the case of a write, with the confirmation of the write.
+///
+/// The refusal of a write that cannot be confirmed happens before any
+/// request — so nothing is written. The question on a terminal is asked
+/// after the read, so it can name the batch and the case as the server
+/// knows them.
+async fn resolve_and_confirm(
+    client: &PlaneClient,
+    project: Option<&str>,
+    run: &str,
+    case: &str,
+    yes: bool,
+    subject: &str,
+) -> Result<(Project, TestRun, TestRunCase), PlaneError> {
+    refuse_unconfirmable(yes, &format!("{subject} of {case} in {run}"))?;
+    let project = require_project(client, project).await?;
+    let found = resolve_test_run(client, &project.id, run).await?;
+    let record = require_run_case(&found, case)?;
+    if !yes {
+        confirm_on_terminal(&format!(
+            "{subject} of {} in {}",
+            record.case_number, found.number
+        ))?;
+    }
+    Ok((project, found, record))
+}
+
 /// The case record of a batch, by its uuid or its number.
 ///
 /// The batch holds the records of its cases, so the batch itself answers
@@ -1033,20 +1060,15 @@ async fn cmd_run_step(
     let actual_value = collect_markdown(actual, actual_file, "--actual", "--actual-file")?;
     // The confirmation is asked for before the write — and a
     // non-interactive caller has to pass --yes.
-    refuse_unconfirmable(
+    let (project, found, record) = resolve_and_confirm(
+        client,
+        project,
+        run,
+        case,
         yes,
-        &format!("The verdict {verdict} of step {step_number} of {case} in {run}"),
-    )?;
-
-    let project = require_project(client, project).await?;
-    let found = resolve_test_run(client, &project.id, run).await?;
-    let record = require_run_case(&found, case)?;
-    if !yes {
-        confirm_on_terminal(&format!(
-            "The verdict {verdict} of step {step_number} of {} in {}",
-            record.case_number, found.number
-        ))?;
-    }
+        &format!("The verdict {verdict} of step {step_number}"),
+    )
+    .await?;
 
     // The file is bound to the step record, so the record is read
     // first — its uuid is what the upload names.
@@ -1081,11 +1103,7 @@ async fn cmd_run_step(
         || current
             .map(|step| !step.attachments.is_empty())
             .unwrap_or(false);
-    if verdict == "fail" && evidence_shape(measured, has_file) == Evidence::None {
-        eprintln!(
-            "warning: a failed step needs a measured value before the batch can be closed (the server refuses it with fail_without_actual_value). Pass --actual/--actual-file, or --image."
-        );
-    }
+    let missing_value = verdict == "fail" && evidence_shape(measured, has_file) == Evidence::None;
 
     let write = TestRunStepWrite {
         conclusion: Some(verdict.clone()),
@@ -1094,6 +1112,13 @@ async fn cmd_run_step(
     let written = client
         .update_test_run_step(&project.id, &found.id, &record.id, step_number, &write)
         .await?;
+    // The notice waits for the write, so it is only said when the step
+    // really carries what was written.
+    if missing_value {
+        eprintln!(
+            "warning: a failed step needs a measured value before the batch can be closed (the server refuses it with fail_without_actual_value). Pass --actual/--actual-file, or --image."
+        );
+    }
     if json {
         output_json(&crate::render::test_run_step_view(&written));
     } else {
@@ -1126,20 +1151,15 @@ async fn cmd_run_conclude(
 ) -> Result<(), PlaneError> {
     let conclusion = normalize_conclusion(conclusion)?;
     let evidence_text = collect_markdown(evidence, evidence_file, "--evidence", "--evidence-file")?;
-    refuse_unconfirmable(
+    let (project, found, record) = resolve_and_confirm(
+        client,
+        project,
+        run,
+        case,
         yes,
-        &format!("The conclusion {conclusion} of {case} in {run}"),
-    )?;
-
-    let project = require_project(client, project).await?;
-    let found = resolve_test_run(client, &project.id, run).await?;
-    let record = require_run_case(&found, case)?;
-    if !yes {
-        confirm_on_terminal(&format!(
-            "The conclusion {conclusion} of {} in {}",
-            record.case_number, found.number
-        ))?;
-    }
+        &format!("The conclusion {conclusion}"),
+    )
+    .await?;
 
     let write = TestRunCaseWrite {
         conclusion: Some(conclusion.clone()),
@@ -1168,18 +1188,20 @@ async fn cmd_run_conclude(
         );
     }
     // The server runs the validity rules when the batch is closed; the
-    // CLI says what is still missing while the tester can write it.
+    // CLI says what is still missing while the tester can write it. The
+    // notice waits for the write, so it is only said when the record
+    // really carries what was written.
     let missing = missing_for_finalize(&conclusion, &write, &record, uploaded.is_some());
+
+    let written = client
+        .update_test_run_case(&project.id, &found.id, &record.id, &write)
+        .await?;
     if !missing.is_empty() {
         eprintln!(
             "warning: the batch cannot be closed until the case carries: {}.",
             missing.join(", ")
         );
     }
-
-    let written = client
-        .update_test_run_case(&project.id, &found.id, &record.id, &write)
-        .await?;
     if json {
         output_json(&test_run_case_view(&written));
     } else {

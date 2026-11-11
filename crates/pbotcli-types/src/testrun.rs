@@ -7,9 +7,10 @@
 //!
 //! The field names are the contract: the v1 surface reuses the app
 //! serializers verbatim, so the shapes below are the shapes the server
-//! hands out. Every read field is optional-tolerant (`#[serde(default)]`)
-//! because the server omits a field it has not populated (a batch
-//! without an executor, a step record without a verdict).
+//! hands out. Every read field but the id is optional-tolerant
+//! (`#[serde(default)]`) because the server omits a field it has not
+//! populated (a batch without an executor, a step record without a
+//! verdict).
 //!
 //! Two rules of the feature are visible in these types:
 //!

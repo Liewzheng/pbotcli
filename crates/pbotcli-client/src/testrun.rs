@@ -413,9 +413,10 @@ impl PlaneClient {
 ///
 /// The server answers `{"error": "Test run not found"}` for a batch that
 /// does not exist and a plain `{"detail": "Not found."}` for an endpoint
-/// the instance does not serve — the two are told apart by the name.
+/// the instance does not serve — the two are told apart by the name of
+/// the batch in the sentence.
 fn names_the_batch(message: &str) -> bool {
-    message.to_lowercase().contains("test run not found")
+    message.to_lowercase().contains("test run")
 }
 
 /// The query parameters of the list of the batches.

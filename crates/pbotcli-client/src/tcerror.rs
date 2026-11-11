@@ -298,15 +298,18 @@ fn hint_for(envelope: &ErrorEnvelope) -> String {
 /// True when the error of the server carries the stable code `code`.
 ///
 /// The typed error of the workspace carries the code of the refusal in
-/// its message: the mapper prints the code of the refusal first and the
-/// code of every problem with it. A caller that has to act on one code
-/// reads it from there — this function is the one place that does, and
-/// it matches the code as a word and not as a part of one.
+/// its message: the mapper prints the code of the refusal on the first
+/// line and the code of every problem on a line of its own. A caller
+/// that has to act on one code reads it from there — this function is
+/// the one place that does, and it reads the **first word** of a line,
+/// where the mapper puts the code. A sentence that happens to mention a
+/// code is not a refusal of that code.
 pub fn carries_code(error: &PlaneError, code: &str) -> bool {
-    error
-        .to_string()
-        .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
-        .any(|token| token == code)
+    error.to_string().lines().any(|line| {
+        line.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .find(|token| !token.is_empty())
+            .is_some_and(|token| token == code)
+    })
 }
 
 /// Map a failure of the test-case feature onto the typed error of the
@@ -595,6 +598,17 @@ mod tests {
         assert_eq!(err.exit_code(), pbotcli_core::errors::EXIT_VALIDATION);
         let hint = err.hint().expect("a hint");
         assert!(hint.contains("--retest-of"), "{hint}");
+    }
+
+    #[test]
+    fn a_sentence_that_mentions_a_code_is_not_a_refusal_of_that_code() {
+        // The code of a refusal is the first word of a line — a sentence
+        // that holds the code in the middle is not a refusal of it.
+        let body = r#"{"error":"The batch is not valid.","code":"invalid_batch","errors":[
+            {"code":"run_completed","message":"The batch was already completed (run_completed)."}]}"#;
+        let err = map_testcase_error(400, body);
+        assert!(carries_code(&err, "run_completed"));
+        assert!(!carries_code(&err, "duplicate_case_number"));
     }
 
     #[test]

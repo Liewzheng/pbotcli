@@ -482,6 +482,10 @@ pub fn test_run_view(run: &TestRun) -> Value {
 ///
 /// The four counts are not a partition of the total — `manual` overlaps
 /// `fail` — so the view carries them as they are.
+///
+/// The view has two shapes: the counts and the deviations of a batch,
+/// and the answer of an instance that does not serve the endpoint at
+/// all — `{"number": …, "available": false}`.
 pub fn test_run_summary_view(number: &str, summary: &TestRunSummary) -> Value {
     json!({
         "number": number,
