@@ -727,6 +727,20 @@ fn duplicate_case_error(case_number: &str, run_number: &str, server: Option<&str
     )
 }
 
+/// The sentences of the server in a refusal.
+///
+/// The mapper prints the code of the refusal first and one line per
+/// problem; the sentence of a problem is what follows its code.
+fn server_sentences(err: &PlaneError) -> String {
+    err.to_string()
+        .lines()
+        .skip(1)
+        .filter_map(|line| line.split_once(": ").map(|(_, text)| text.trim()))
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// True when the error of the server carries the stable code `code`.
 ///
 /// The typed error of the workspace carries the code of the refusal
@@ -943,7 +957,7 @@ async fn cmd_run_add(
     }
     // The batch knows which of the cases is already in it — so the
     // refusal names the case before the request is made.
-    if let Some(duplicate) = duplicate_in_batch(client, &project.id, &found.id, &ids).await? {
+    if let Some(duplicate) = duplicate_in(&found.cases, &ids) {
         return Err(duplicate_case_error(&duplicate, &found.number, None));
     }
     let created = match client
@@ -954,13 +968,12 @@ async fn cmd_run_add(
         // A concurrent add won the race: the server refused the same
         // reason, and the batch knows which case it was.
         Err(err) if carries_code(&err, "duplicate_case_number") => {
-            let duplicate = duplicate_in_batch(client, &project.id, &found.id, &ids)
-                .await?
-                .unwrap_or_else(|| numbers.join(", "));
+            let cases = client.list_test_run_cases(&project.id, &found.id).await?;
+            let duplicate = duplicate_in(&cases, &ids).unwrap_or_else(|| numbers.join(", "));
             return Err(duplicate_case_error(
                 &duplicate,
                 &found.number,
-                Some(&err.to_string()),
+                Some(&server_sentences(&err)),
             ));
         }
         Err(err) => return Err(err),
@@ -981,17 +994,11 @@ async fn cmd_run_add(
 /// The batch holds a snapshot of every case it took in, and the snapshot
 /// names the case it was made of — so the batch itself answers which of
 /// the cases the caller tried to add is already there.
-async fn duplicate_in_batch(
-    client: &PlaneClient,
-    project_id: &str,
-    run_id: &str,
-    ids: &[String],
-) -> Result<Option<String>, PlaneError> {
-    let cases = client.list_test_run_cases(project_id, run_id).await?;
-    Ok(cases
+fn duplicate_in(cases: &[TestRunCase], ids: &[String]) -> Option<String> {
+    cases
         .iter()
         .find(|case| ids.iter().any(|id| id == &case.test_case))
-        .map(|case| case.case_number.clone()))
+        .map(|case| case.case_number.clone())
 }
 
 #[allow(clippy::too_many_arguments)]

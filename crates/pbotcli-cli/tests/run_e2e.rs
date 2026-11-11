@@ -41,8 +41,16 @@ const TC_CASES: &str = r#"{"results":[{"id":"tc1","number":"TC-CLI-007","module"
 const RUN: &str = r#"{"id":"r1","number":"RUN-20261109-01","run_date":"2026-11-09","version_number":"1.2.3","build_number":"42","commit_hash":"abc1234","environment":"bench","executed_by":"u1","executed_by_name":"Bot","status":"in_progress","retest_of":null,"retest_of_number":null,"cases":[{"id":"rc1","test_case":"tc1","case_number":"TC-CLI-007","case_module_code":"CLI","case_title":"Log in with a valid account","case_purpose":"Make sure the login path works","case_object_overview":"The login form","case_priority":"P1","case_preconditions":"The account exists","case_environment":"Windows 10","conclusion":"","evidence":"","remarks":"","actual_result_summary":"","na_reason":"","na_criteria_source":"","manual_executor":"","manual_condition":"","steps":[{"id":"s1","sequence_id":3,"action_snapshot":"Log in","expected_result_snapshot":"The dashboard is shown","conclusion":"unset","actual_value":"","attachments":[]}],"attachments":[],"created_at":"2026-11-10T08:29:37Z","updated_at":"2026-11-10T08:29:37Z"}],"created_at":"2026-11-09T08:29:37Z","updated_at":"2026-11-09T08:29:37Z","created_by":{"id":"u1","display_name":"Bot","first_name":"B","last_name":""}}"#;
 const RUN_CASES: &str = r#"[{"id":"rc1","test_case":"tc1","case_number":"TC-CLI-007","case_module_code":"CLI","case_title":"Log in with a valid account","case_purpose":"Make sure the login path works","case_object_overview":"The login form","case_priority":"P1","case_preconditions":"The account exists","case_environment":"Windows 10","conclusion":"","evidence":"","remarks":"","actual_result_summary":"","na_reason":"","na_criteria_source":"","manual_executor":"","manual_condition":"","steps":[{"id":"s1","sequence_id":3,"action_snapshot":"Log in","expected_result_snapshot":"The dashboard is shown","conclusion":"unset","actual_value":"","attachments":[]}],"attachments":[],"created_at":"2026-11-10T08:29:37Z","updated_at":"2026-11-10T08:29:37Z"}]"#;
 
+/// The batches of the project, as the list endpoint hands them out.
+const RUN_LIST: &str = r#"{"results":[{"id":"r1","number":"RUN-20261109-01","run_date":"2026-11-09","version_number":"1.2.3","build_number":"42","commit_hash":"abc1234","environment":"bench","executed_by":"u1","executed_by_name":"Bot","status":"in_progress","retest_of":null,"retest_of_number":null,"cases":[],"created_at":"2026-11-09T08:29:37Z","updated_at":"2026-11-09T08:29:37Z"}],"next_cursor":null,"next_page_results":false}"#;
+/// The batch before a case was added to it.
+const RUN_WITHOUT_CASES: &str = r#"{"id":"r1","number":"RUN-20261109-01","run_date":"2026-11-09","version_number":"1.2.3","build_number":"42","commit_hash":"abc1234","environment":"bench","executed_by":"u1","executed_by_name":"Bot","status":"in_progress","retest_of":null,"retest_of_number":null,"cases":[],"created_at":"2026-11-09T08:29:37Z","updated_at":"2026-11-09T08:29:37Z"}"#;
+
 /// The reads every `run` command makes before it touches the feature.
-fn mock_run_reads(server: &mut Server) {
+///
+/// `run_body` is the batch the server hands out — a batch that holds a
+/// case, or one that holds none.
+fn mock_run_reads(server: &mut Server, run_body: &str) {
     server
         .mock("GET", "/api/v1/workspaces/ws/projects/")
         .match_query(Matcher::Any)
@@ -69,16 +77,14 @@ fn mock_run_reads(server: &mut Server) {
         .match_query(Matcher::Any)
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(
-            r#"{"results":[{"id":"r1","number":"RUN-20261109-01","run_date":"2026-11-09","version_number":"1.2.3","build_number":"42","commit_hash":"abc1234","environment":"bench","executed_by":"u1","executed_by_name":"Bot","status":"in_progress","retest_of":null,"retest_of_number":null,"cases":[],"created_at":"2026-11-09T08:29:37Z","updated_at":"2026-11-09T08:29:37Z"}],"next_cursor":null,"next_page_results":false}"#,
-        )
+        .with_body(RUN_LIST)
         .create();
     server
         .mock("GET", "/api/v1/workspaces/ws/projects/p1/test-runs/r1/")
         .match_query(Matcher::Any)
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(RUN)
+        .with_body(run_body)
         .create();
 }
 
@@ -100,7 +106,7 @@ fn mock_run_cases(server: &mut Server, body: &str) {
 #[test]
 fn run_create_sends_the_header_without_a_number_and_prints_the_number_of_the_server() {
     let mut server = Server::new();
-    mock_run_reads(&mut server);
+    mock_run_reads(&mut server, RUN);
     let create = server
         .mock("POST", "/api/v1/workspaces/ws/projects/p1/test-runs/")
         .match_body(Matcher::Json(serde_json::json!({
@@ -149,7 +155,7 @@ fn run_create_sends_the_header_without_a_number_and_prints_the_number_of_the_ser
 #[test]
 fn run_ls_prints_the_batches_of_the_project() {
     let mut server = Server::new();
-    mock_run_reads(&mut server);
+    mock_run_reads(&mut server, RUN);
 
     let out = run(
         &["run", "ls", "-p", "Demo", "--json", "--no-cache"],
@@ -165,7 +171,7 @@ fn run_ls_prints_the_batches_of_the_project() {
 #[test]
 fn run_show_prints_the_header_the_cases_and_their_steps() {
     let mut server = Server::new();
-    mock_run_reads(&mut server);
+    mock_run_reads(&mut server, RUN);
 
     let out = run(
         &["run", "show", "RUN-20261109-01", "-p", "Demo", "--no-cache"],
@@ -182,7 +188,7 @@ fn run_show_prints_the_header_the_cases_and_their_steps() {
 #[test]
 fn run_show_json_carries_the_steps_and_the_files() {
     let mut server = Server::new();
-    mock_run_reads(&mut server);
+    mock_run_reads(&mut server, RUN);
 
     let out = run(
         &[
@@ -208,7 +214,7 @@ fn run_show_json_carries_the_steps_and_the_files() {
 #[test]
 fn run_add_sends_the_uuids_of_the_cases() {
     let mut server = Server::new();
-    mock_run_reads(&mut server);
+    mock_run_reads(&mut server, RUN_WITHOUT_CASES);
     mock_run_cases(&mut server, "[]");
     let add = server
         .mock(
@@ -243,7 +249,7 @@ fn run_add_sends_the_uuids_of_the_cases() {
 #[test]
 fn run_step_writes_the_verdict_and_the_measured_value() {
     let mut server = Server::new();
-    mock_run_reads(&mut server);
+    mock_run_reads(&mut server, RUN);
     let step = server
         .mock(
             "PATCH",
@@ -285,7 +291,7 @@ fn run_step_writes_the_verdict_and_the_measured_value() {
 #[test]
 fn run_step_sends_the_measured_value_of_a_file_byte_for_byte() {
     let mut server = Server::new();
-    mock_run_reads(&mut server);
+    mock_run_reads(&mut server, RUN);
     // The Markdown reaches the server as it was written: no conversion,
     // no rewriting, and the blank lines inside it stay.
     let notes = "# the log\n\n* the password was refused\n* and the account is locked\n";
@@ -335,7 +341,7 @@ fn run_step_sends_the_measured_value_of_a_file_byte_for_byte() {
 #[test]
 fn run_conclude_writes_the_conclusion_and_the_evidence() {
     let mut server = Server::new();
-    mock_run_reads(&mut server);
+    mock_run_reads(&mut server, RUN);
     let conclude = server
         .mock(
             "PATCH",
@@ -375,7 +381,7 @@ fn run_conclude_writes_the_conclusion_and_the_evidence() {
 #[test]
 fn run_finalize_closes_the_batch() {
     let mut server = Server::new();
-    mock_run_reads(&mut server);
+    mock_run_reads(&mut server, RUN);
     let finalize = server
         .mock(
             "POST",
@@ -405,7 +411,7 @@ fn run_finalize_closes_the_batch() {
 #[test]
 fn run_summary_prints_the_counts_and_the_deviations() {
     let mut server = Server::new();
-    mock_run_reads(&mut server);
+    mock_run_reads(&mut server, RUN);
     server
         .mock(
             "GET",
@@ -444,7 +450,7 @@ fn run_summary_prints_the_counts_and_the_deviations() {
 #[test]
 fn run_summary_says_so_when_the_instance_does_not_serve_the_endpoint() {
     let mut server = Server::new();
-    mock_run_reads(&mut server);
+    mock_run_reads(&mut server, RUN);
     server
         .mock(
             "GET",
@@ -477,7 +483,7 @@ fn run_summary_says_so_when_the_instance_does_not_serve_the_endpoint() {
 #[test]
 fn run_step_without_a_confirmation_writes_nothing() {
     let mut server = Server::new();
-    mock_run_reads(&mut server);
+    mock_run_reads(&mut server, RUN);
     // The write may not be made: the command is not on a terminal and it
     // was not confirmed with --yes.
     let step = server
@@ -517,7 +523,7 @@ fn run_step_without_a_confirmation_writes_nothing() {
 #[test]
 fn run_conclude_without_a_confirmation_writes_nothing() {
     let mut server = Server::new();
-    mock_run_reads(&mut server);
+    mock_run_reads(&mut server, RUN);
     let conclude = server
         .mock(
             "PATCH",
@@ -551,7 +557,7 @@ fn run_conclude_without_a_confirmation_writes_nothing() {
 #[test]
 fn a_case_that_is_already_in_the_batch_is_refused_with_its_number() {
     let mut server = Server::new();
-    mock_run_reads(&mut server);
+    mock_run_reads(&mut server, RUN);
     mock_run_cases(&mut server, RUN_CASES);
     // The batch holds the case already, so the CLI refuses before it
     // writes — and it names the case.
@@ -586,10 +592,40 @@ fn a_case_that_is_already_in_the_batch_is_refused_with_its_number() {
 #[test]
 fn a_duplicate_that_arrives_as_a_conflict_reads_like_the_same_reason() {
     let mut server = Server::new();
-    mock_run_reads(&mut server);
-    mock_run_cases(&mut server, "[]");
-    // The race of two concurrent adds: the server refuses with the same
-    // code, and the CLI reads it like the refusal of the check above.
+    // The batch holds no case yet: the duplicate arrives while the
+    // request is in flight.
+    server
+        .mock("GET", "/api/v1/workspaces/ws/projects/")
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(PROJECTS)
+        .create();
+    server
+        .mock("GET", "/api/v1/workspaces/ws/projects/p1/test-cases/")
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(TC_CASES)
+        .create();
+    server
+        .mock("GET", "/api/v1/workspaces/ws/projects/p1/test-runs/")
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(RUN_LIST)
+        .create();
+    server
+        .mock("GET", "/api/v1/workspaces/ws/projects/p1/test-runs/r1/")
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(RUN_WITHOUT_CASES)
+        .create();
+    // The race of two concurrent adds: the batch holds the case now,
+    // and the server refuses with the same code — the CLI reads it like
+    // the refusal of the check above.
+    mock_run_cases(&mut server, RUN_CASES);
     server
         .mock("POST", "/api/v1/workspaces/ws/projects/p1/test-runs/r1/cases/")
         .with_status(409)
@@ -621,7 +657,7 @@ fn a_duplicate_that_arrives_as_a_conflict_reads_like_the_same_reason() {
 #[test]
 fn a_conclusion_that_is_final_is_never_worked_around() {
     let mut server = Server::new();
-    mock_run_reads(&mut server);
+    mock_run_reads(&mut server, RUN);
     let conclude = server
         .mock(
             "PATCH",
@@ -663,7 +699,7 @@ fn a_conclusion_that_is_final_is_never_worked_around() {
 #[test]
 fn a_frozen_batch_is_refused_once_and_never_retried() {
     let mut server = Server::new();
-    mock_run_reads(&mut server);
+    mock_run_reads(&mut server, RUN_WITHOUT_CASES);
     mock_run_cases(&mut server, "[]");
     let add = server
         .mock(
@@ -701,7 +737,7 @@ fn a_frozen_batch_is_refused_once_and_never_retried() {
 #[test]
 fn a_refused_finalize_prints_every_reason_with_its_case_and_step() {
     let mut server = Server::new();
-    mock_run_reads(&mut server);
+    mock_run_reads(&mut server, RUN);
     server
         .mock("POST", "/api/v1/workspaces/ws/projects/p1/test-runs/r1/finalize/")
         .with_status(400)
@@ -737,7 +773,7 @@ fn a_refused_finalize_prints_every_reason_with_its_case_and_step() {
 #[test]
 fn a_case_that_carries_results_is_not_taken_out_of_the_batch() {
     let mut server = Server::new();
-    mock_run_reads(&mut server);
+    mock_run_reads(&mut server, RUN);
     let remove = server
         .mock(
             "DELETE",
@@ -773,7 +809,7 @@ fn a_case_that_carries_results_is_not_taken_out_of_the_batch() {
 #[test]
 fn a_verdict_the_server_would_refuse_is_refused_before_the_request() {
     let mut server = Server::new();
-    mock_run_reads(&mut server);
+    mock_run_reads(&mut server, RUN);
     let step = server
         .mock(
             "PATCH",
@@ -868,7 +904,7 @@ fn run_finalize_refuses_a_batch_without_an_executor() {
 #[test]
 fn run_conclude_accepts_an_image_as_the_evidence_of_a_case() {
     let mut server = Server::new();
-    mock_run_reads(&mut server);
+    mock_run_reads(&mut server, RUN);
     mock_run_cases(&mut server, RUN_CASES);
     let dir = std::env::temp_dir().join(format!("pbotcli_run_shot_{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("temp dir");
@@ -950,7 +986,7 @@ fn run_conclude_accepts_an_image_as_the_evidence_of_a_case() {
 #[test]
 fn run_step_binds_an_image_to_the_step_record() {
     let mut server = Server::new();
-    mock_run_reads(&mut server);
+    mock_run_reads(&mut server, RUN);
     mock_run_cases(&mut server, RUN_CASES);
     let dir = std::env::temp_dir().join(format!("pbotcli_run_step_shot_{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("temp dir");
@@ -1042,7 +1078,7 @@ fn run_step_binds_an_image_to_the_step_record() {
 #[test]
 fn a_value_and_a_file_are_not_mixed() {
     let mut server = Server::new();
-    mock_run_reads(&mut server);
+    mock_run_reads(&mut server, RUN);
     let step = server
         .mock(
             "PATCH",
@@ -1082,8 +1118,17 @@ fn a_value_and_a_file_are_not_mixed() {
 #[test]
 fn the_whole_flow_of_a_batch_runs_from_the_create_to_the_summary() {
     let mut server = Server::new();
-    mock_run_reads(&mut server);
-    mock_run_cases(&mut server, "[]");
+    // The batch holds no case before the add, and one after it: the
+    // first read of the batch is the one of the add.
+    mock_run_reads(&mut server, RUN_WITHOUT_CASES);
+    server
+        .mock("GET", "/api/v1/workspaces/ws/projects/p1/test-runs/r1/")
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(RUN)
+        .create();
+    mock_run_cases(&mut server, RUN_CASES);
     server
         .mock("POST", "/api/v1/workspaces/ws/projects/p1/test-runs/")
         .with_status(201)
