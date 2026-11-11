@@ -585,14 +585,14 @@ fn is_placeholder(text: &str) -> bool {
 /// destination of a link is not text either: `[text](url)` says `text`.
 /// The emphasis of a text is not what the text says, so `**不一致**`
 /// carries the text `不一致`.
+///
+/// The value is read the way the server reads it, and a value it cannot
+/// make sense of is read as text: an unterminated picture (`![a`) is
+/// text, and a mark that stands alone (`TBD*`) is text as well.
 fn markdown_text(value: &str) -> String {
     let without_pictures = strip_pictures(value);
     let without_destinations = strip_destinations(&without_pictures);
-    // The emphasis and the code marks are markup, not text.
-    without_destinations
-        .chars()
-        .filter(|c| !matches!(c, '*' | '_' | '`'))
-        .collect()
+    strip_marks(&without_destinations)
 }
 
 /// Remove the pictures: `![alt](url)` is a file, not a sentence.
@@ -604,6 +604,8 @@ fn strip_pictures(value: &str) -> String {
         match rest[start..].find(')') {
             Some(end) => rest = &rest[start + end + 1..],
             None => {
+                // An unterminated picture is text, not a picture.
+                text.push_str(&rest[start..]);
                 rest = "";
                 break;
             }
@@ -622,6 +624,8 @@ fn strip_destinations(value: &str) -> String {
         match rest[start + 1..].find(')') {
             Some(end) => rest = &rest[start + 2 + end..],
             None => {
+                // An unterminated link is text, not a link.
+                text.push_str(&rest[start + 1..]);
                 rest = "";
                 break;
             }
@@ -629,6 +633,26 @@ fn strip_destinations(value: &str) -> String {
     }
     text.push_str(rest);
     text
+}
+
+/// Remove the markup marks of a value — but only the ones that are
+/// markup.
+///
+/// A mark that stands alone is text: `TBD*` says `TBD*`, while `**TBD**`
+/// says `TBD`. So a mark is taken away only when the value holds a
+/// second one of it.
+fn strip_marks(text: &str) -> String {
+    let stars = text.matches('*').count();
+    let underscores = text.matches('_').count();
+    let backticks = text.matches('`').count();
+    text.chars()
+        .filter(|c| match c {
+            '*' => stars < 2,
+            '_' => underscores < 2,
+            '`' => backticks < 2,
+            _ => true,
+        })
+        .collect()
 }
 
 /// True when the value carries a text of its own.
@@ -1534,6 +1558,65 @@ mod tests {
             evidence_shape(Some("![](shot.png)"), true),
             Evidence::Attachment
         );
+    }
+
+    #[test]
+    fn the_placeholders_are_the_placeholders_of_the_server() {
+        // The list is a copy of `PLACEHOLDER_VALUES` of
+        // `db/testcase_validity.py` on the server. It is pinned here, so
+        // a change of it is a deliberate one — and the rule it feeds
+        // only ever *warns*: a write is never refused because of it.
+        assert_eq!(PLACEHOLDERS.len(), 25);
+        for placeholder in [
+            "-",
+            "--",
+            "---",
+            "—",
+            "–",
+            ".",
+            "..",
+            "...",
+            "…",
+            "?",
+            "??",
+            "???",
+            "*",
+            "**",
+            "_",
+            "__",
+            "tbd",
+            "todo",
+            "xxx",
+            "待补充",
+            "待填写",
+            "待填",
+            "待定",
+            "暂填",
+            "待确认",
+        ] {
+            assert!(
+                PLACEHOLDERS.contains(&placeholder),
+                "{placeholder} is a placeholder of the server"
+            );
+        }
+    }
+
+    #[test]
+    fn a_value_the_server_cannot_read_is_read_as_text() {
+        // An unterminated picture and an unterminated link are text,
+        // and a mark that stands alone is text too.
+        assert_eq!(
+            evidence_shape(Some("the log ![a screenshot"), false),
+            Evidence::Text
+        );
+        assert_eq!(
+            evidence_shape(Some("the log [a report"), false),
+            Evidence::Text
+        );
+        // `TBD*` is not the placeholder `TBD`: the mark is text.
+        assert_eq!(evidence_shape(Some("TBD*"), false), Evidence::Text);
+        // `**TBD**` says `TBD`, and `TBD` is a placeholder.
+        assert_eq!(evidence_shape(Some("**TBD**"), false), Evidence::None);
     }
 
     #[test]
