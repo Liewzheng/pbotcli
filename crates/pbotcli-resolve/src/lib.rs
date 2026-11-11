@@ -3,6 +3,8 @@
 //! Mirrors the removed Python line's `utils/fuzzy.py` (rapidfuzz
 //! token_sort_ratio, threshold 60) and `utils/resolve.py`.
 
+pub mod testcase;
+
 use pbotcli_client::PlaneClient;
 use pbotcli_core::PlaneError;
 use pbotcli_types::Project;

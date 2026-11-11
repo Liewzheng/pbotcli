@@ -7,6 +7,8 @@
 //! same way the Python CLI's `_enrich_work_item` resolves names via cached
 //! state/label/member maps.
 
+pub mod testcase;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
