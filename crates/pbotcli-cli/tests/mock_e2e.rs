@@ -3254,7 +3254,7 @@ fn tc_create_reads_the_steps_from_a_json_file() {
         .with_body(TC_CASE)
         .create();
 
-    let dir = std::env::temp_dir().join(format!("pbotcli_tc_steps_{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("pbotcli_tc_steps_json_{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("temp dir");
     let path = dir.join("steps.json");
     std::fs::write(
@@ -4383,4 +4383,220 @@ fn tc_create_help_makes_the_mandatory_fields_mandatory() {
             "{flag} is missing from the usage line"
         );
     }
+}
+
+#[test]
+fn tc_update_refuses_an_empty_step_table() {
+    let mut server = Server::new();
+    mock_tc_reads(&mut server);
+    let dir = std::env::temp_dir().join(format!("pbotcli_tc_empty_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let path = dir.join("steps.json");
+    std::fs::write(&path, "[]").expect("write the steps file");
+
+    let out = run(
+        &[
+            "tc",
+            "update",
+            "TC-CLI-001",
+            "-p",
+            "Demo",
+            "--steps-file",
+            path.to_str().unwrap(),
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    std::fs::remove_dir_all(&dir).ok();
+    // A replacement that empties the table is refused, exactly as `tc steps`
+    // refuses it.
+    assert_eq!(out.status.code(), Some(5));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("at least one step"), "{err}");
+}
+
+#[test]
+fn tc_create_refuses_a_status_the_server_does_not_know() {
+    let server = Server::new();
+
+    let out = run(
+        &[
+            "tc",
+            "create",
+            "-p",
+            "Demo",
+            "--module",
+            "CLI",
+            "--title",
+            "A case",
+            "--purpose",
+            "p",
+            "--object-overview",
+            "o",
+            "--priority",
+            "P1",
+            "--precondition",
+            "c",
+            "--environment",
+            "e",
+            "--status",
+            "archived",
+            "--step",
+            "Start pbot | The login form is shown",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert_eq!(out.status.code(), Some(5));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("Invalid status 'archived'"), "{err}");
+    assert!(err.contains("active, void"), "{err}");
+}
+
+#[test]
+fn tc_create_reports_a_steps_file_that_cannot_be_read() {
+    let server = Server::new();
+
+    let out = run(
+        &[
+            "tc",
+            "create",
+            "-p",
+            "Demo",
+            "--module",
+            "CLI",
+            "--title",
+            "A case",
+            "--purpose",
+            "p",
+            "--object-overview",
+            "o",
+            "--priority",
+            "P1",
+            "--precondition",
+            "c",
+            "--environment",
+            "e",
+            "--steps-file",
+            "/no/such/file/pbotcli-steps.json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert_eq!(out.status.code(), Some(5));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("Cannot read the steps file"), "{err}");
+    assert!(err.contains("--steps-file"), "{err}");
+}
+
+#[test]
+fn tc_ls_needs_a_project() {
+    let server = Server::new();
+
+    let out = run(&["tc", "ls", "--no-cache"], &server.url());
+    assert_eq!(out.status.code(), Some(5));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("Project is required"), "{err}");
+    assert!(err.contains("-p/--project"), "{err}");
+}
+
+#[test]
+fn tc_issues_refuses_to_add_and_remove_at_once() {
+    let server = Server::new();
+
+    let out = run(
+        &[
+            "tc",
+            "issues",
+            "TC-CLI-001",
+            "-p",
+            "Demo",
+            "--add",
+            "DEMO-1",
+            "--remove",
+            "DEMO-2",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    // The two flags are exclusive: clap refuses the combination before
+    // anything is sent.
+    assert_eq!(out.status.code(), Some(2));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("cannot be used with"), "{err}");
+}
+
+#[test]
+fn tc_ls_normalizes_the_filters_to_the_vocabulary_of_the_server() {
+    let mut server = Server::new();
+    mock_list(&mut server, "/api/v1/workspaces/ws/projects/", PROJECTS);
+    // The server stores the priority uppercased and compares the status
+    // literally, so the CLI normalizes both.
+    let m = server
+        .mock("GET", "/api/v1/workspaces/ws/projects/p1/test-cases/")
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("priority".to_string(), "P1".to_string()),
+            Matcher::UrlEncoded("status".to_string(), "all".to_string()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(TC_CASES)
+        .create();
+
+    let out = run(
+        &[
+            "tc",
+            "ls",
+            "-p",
+            "Demo",
+            "--priority",
+            "p1",
+            "--status",
+            "ALL",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    m.assert();
+}
+
+#[test]
+fn tc_delete_answers_with_json_when_it_is_asked_for() {
+    let mut server = Server::new();
+    mock_tc_reads(&mut server);
+    let m = server
+        .mock(
+            "DELETE",
+            "/api/v1/workspaces/ws/projects/p1/test-cases/tc1/",
+        )
+        .with_status(204)
+        .create();
+
+    let out = run(
+        &[
+            "tc",
+            "delete",
+            "TC-CLI-001",
+            "-p",
+            "Demo",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout_of(&out)).expect("valid JSON");
+    assert_eq!(parsed["number"], "TC-CLI-001");
+    assert_eq!(parsed["deleted"], true);
+    m.assert();
 }

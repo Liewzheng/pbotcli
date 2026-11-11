@@ -344,6 +344,14 @@ pub fn test_case_module_view(module: &TestCaseModule) -> Value {
 /// JSON view of a test case: the header fields, the step table and the
 /// work-item links.
 ///
+/// The keys are the contract of the `--json` output (ADR-0005): `id`,
+/// `number`, `module`, `module_code`, `title`, `purpose`,
+/// `object_overview`, `priority`, `preconditions`, `environment`,
+/// `related_feature`, `remarks`, `status`, `steps`, `issue_links`,
+/// `created_at`, `updated_at` and `created_by`. A step carries `id`,
+/// `sequence_id`, `action` and `expected_result`; a link carries `id`,
+/// `issue_id`, `issue_identifier` and `issue_name`.
+///
 /// The number is the name of the case and the server assigns it, so it is
 /// the first field of the view — a caller keys on it.
 pub fn test_case_view(case: &TestCase) -> Value {

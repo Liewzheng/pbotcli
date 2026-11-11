@@ -22,8 +22,8 @@ use pbotcli_resolve::testcase::{resolve_test_case, resolve_test_case_module};
 use pbotcli_resolve::{locate_work_item_in_project, resolve_project};
 use pbotcli_types::Project;
 use pbotcli_types::testcase::{
-    TestCase, TestCaseFilters, TestCaseModuleWrite, TestCaseStepWrite, TestCaseStepsWrite,
-    TestCaseWrite,
+    TestCase, TestCaseFilters, TestCaseIssueLink, TestCaseModuleWrite, TestCaseStep,
+    TestCaseStepWrite, TestCaseStepsWrite, TestCaseWrite,
 };
 use serde_json::Value;
 
@@ -53,7 +53,7 @@ pub enum TcCmd {
         /// Filter by the number or the title of a case.
         #[arg(long)]
         search: Option<String>,
-        /// Maximum results to show.
+        /// Maximum results to show (default 50).
         #[arg(long, short = 'l')]
         limit: Option<usize>,
     },
@@ -408,7 +408,9 @@ pub async fn dispatch(client: &PlaneClient, command: TcCmd, json: bool) -> Resul
             )
             .await
         }
-        TcCmd::Delete { case, project } => cmd_tc_delete(client, &case, project.as_deref()).await,
+        TcCmd::Delete { case, project } => {
+            cmd_tc_delete(client, &case, project.as_deref(), json).await
+        }
         TcCmd::Module { command } => match command {
             TcModuleCmd::List { project } => {
                 cmd_tc_module_list(client, project.as_deref(), json).await
@@ -532,6 +534,12 @@ fn parse_steps_document(text: &str) -> Result<Vec<TestCaseStepWrite>, PlaneError
     if trimmed.starts_with('[') {
         return parse_steps_json(trimmed);
     }
+    if trimmed.starts_with('{') {
+        return Err(PlaneError::validation_with_hint(
+            "A JSON steps file must be an array of steps.",
+            "Write it as [{\"action\": \"...\", \"expected\": \"...\"}].",
+        ));
+    }
     parse_steps_lines(text)
 }
 
@@ -565,9 +573,15 @@ fn parse_steps_json(text: &str) -> Result<Vec<TestCaseStepWrite>, PlaneError> {
                 .unwrap_or_default()
                 .trim()
                 .to_string();
-            if action.is_empty() || expected.is_empty() {
+            if action.is_empty() {
                 return Err(PlaneError::validation_with_hint(
-                    "A step of the JSON steps file needs an \"action\" and an \"expected\".",
+                    "The \"action\" of a step of the JSON steps file is missing or not a string.",
+                    "Write the step as {\"action\": \"...\", \"expected\": \"...\"}.",
+                ));
+            }
+            if expected.is_empty() {
+                return Err(PlaneError::validation_with_hint(
+                    "The \"expected\" of a step of the JSON steps file is missing or not a string.",
                     "Write the step as {\"action\": \"...\", \"expected\": \"...\"}.",
                 ));
             }
@@ -750,11 +764,15 @@ async fn cmd_tc_list(
         Some(query) => Some(resolve_issue_id(client, &project, query).await?),
         None => None,
     };
+    // The server stores the priority uppercased and the status lowercased,
+    // and it compares the status filter literally — `--status ALL` would
+    // match no case at all. The filters are normalized here, so a filter
+    // the caller wrote in another case still finds its rows.
     let filters = TestCaseFilters {
         module: module.map(str::to_string),
-        priority: priority.map(str::to_string),
+        priority: priority.map(|value| value.trim().to_uppercase()),
         issue: issue_id,
-        status: status.map(str::to_string),
+        status: status.map(|value| value.trim().to_lowercase()),
         search: search.map(str::to_string),
     };
     let mut cases = client.list_test_cases(&project.id, &filters).await?;
@@ -828,31 +846,14 @@ async fn cmd_tc_show(
     ];
     output_table(&["Field", "Value"], &rows);
 
-    let step_rows: Vec<Vec<String>> = found
-        .steps
-        .iter()
-        .map(|step| {
-            vec![
-                step.sequence_id.to_string(),
-                step.action.clone(),
-                step.expected_result.clone(),
-            ]
-        })
-        .collect();
-    output_table(&["Step", "Action", "Expected result"], &step_rows);
-
-    let issue_rows: Vec<Vec<String>> = found
-        .issue_links
-        .iter()
-        .map(|link| {
-            vec![
-                link.issue_identifier.clone().unwrap_or_default(),
-                link.issue_name.clone().unwrap_or_default(),
-                link.issue_id.clone(),
-            ]
-        })
-        .collect();
-    output_table(&["Work item", "Title", "Issue ID"], &issue_rows);
+    output_table(
+        &["Step", "Action", "Expected result"],
+        &step_rows(&found.steps),
+    );
+    output_table(
+        &["Work item", "Title", "Issue ID"],
+        &issue_rows(&found.issue_links),
+    );
     Ok(())
 }
 
@@ -884,6 +885,17 @@ async fn cmd_tc_update(
     json: bool,
 ) -> Result<(), PlaneError> {
     let steps = collect_steps(opts.step, opts.steps_file)?;
+    // A step table without a row is refused, exactly as `tc steps` refuses
+    // it: the server would refuse it too (`step_count_zero`), and a
+    // replacement that empties the table is never what the caller meant.
+    if let Some(steps) = &steps
+        && steps.is_empty()
+    {
+        return Err(PlaneError::validation_with_hint(
+            "A step table needs at least one step.",
+            "Pass --step \"action | expected result\" (or a --steps-file that holds one).",
+        ));
+    }
     let write = update_write(opts, steps)?;
     // An update without a field would be a write of nothing: the server
     // would answer 200 and the record would stay as it is. The refusal
@@ -932,6 +944,36 @@ async fn announce_step_replacement(
     Ok(())
 }
 
+/// The rows of a step table: the number of the step, its action and its
+/// expected result.
+fn step_rows(steps: &[TestCaseStep]) -> Vec<Vec<String>> {
+    steps
+        .iter()
+        .map(|step| {
+            vec![
+                step.sequence_id.to_string(),
+                step.action.clone(),
+                step.expected_result.clone(),
+            ]
+        })
+        .collect()
+}
+
+/// The rows of the work-item links of a case: the identifier of the work
+/// item, its title and its uuid.
+fn issue_rows(links: &[TestCaseIssueLink]) -> Vec<Vec<String>> {
+    links
+        .iter()
+        .map(|link| {
+            vec![
+                link.issue_identifier.clone().unwrap_or_default(),
+                link.issue_name.clone().unwrap_or_default(),
+                link.issue_id.clone(),
+            ]
+        })
+        .collect()
+}
+
 /// Print the outcome of a write: the number the server assigned.
 fn output_case_written(case: &TestCase, verb: &str, json: bool) {
     if json {
@@ -959,17 +1001,7 @@ async fn cmd_tc_steps(
             let views: Vec<Value> = table.iter().map(test_case_step_view).collect();
             output_json(&views);
         } else {
-            let rows: Vec<Vec<String>> = table
-                .iter()
-                .map(|step| {
-                    vec![
-                        step.sequence_id.to_string(),
-                        step.action.clone(),
-                        step.expected_result.clone(),
-                    ]
-                })
-                .collect();
-            output_table(&["Step", "Action", "Expected result"], &rows);
+            output_table(&["Step", "Action", "Expected result"], &step_rows(&table));
         }
         return Ok(());
     };
@@ -990,18 +1022,10 @@ async fn cmd_tc_steps(
         let views: Vec<Value> = result.steps.iter().map(test_case_step_view).collect();
         output_json(&views);
     } else {
-        let rows: Vec<Vec<String>> = result
-            .steps
-            .iter()
-            .map(|step| {
-                vec![
-                    step.sequence_id.to_string(),
-                    step.action.clone(),
-                    step.expected_result.clone(),
-                ]
-            })
-            .collect();
-        output_table(&["Step", "Action", "Expected result"], &rows);
+        output_table(
+            &["Step", "Action", "Expected result"],
+            &step_rows(&result.steps),
+        );
     }
     Ok(())
 }
@@ -1057,17 +1081,7 @@ async fn cmd_tc_issues(
             .collect();
         output_json(&views);
     } else {
-        let rows: Vec<Vec<String>> = links
-            .iter()
-            .map(|link| {
-                vec![
-                    link.issue_identifier.clone().unwrap_or_default(),
-                    link.issue_name.clone().unwrap_or_default(),
-                    link.issue_id.clone(),
-                ]
-            })
-            .collect();
-        output_table(&["Work item", "Title", "Issue ID"], &rows);
+        output_table(&["Work item", "Title", "Issue ID"], &issue_rows(&links));
     }
     Ok(())
 }
@@ -1076,11 +1090,20 @@ async fn cmd_tc_delete(
     client: &PlaneClient,
     case: &str,
     project: Option<&str>,
+    json: bool,
 ) -> Result<(), PlaneError> {
     let project = require_project(client, project).await?;
     let found = resolve_test_case(client, &project.id, case).await?;
     client.delete_test_case(&project.id, &found.id).await?;
-    eprintln!("Deleted {}.", found.number);
+    if json {
+        output_json(&serde_json::json!({
+            "number": found.number,
+            "id": found.id,
+            "deleted": true,
+        }));
+    } else {
+        eprintln!("Deleted {}.", found.number);
+    }
     Ok(())
 }
 
@@ -1206,6 +1229,23 @@ mod tests {
     fn a_json_step_without_an_expected_result_is_refused() {
         let err = parse_steps_document(r#"[{"action": "Open the page"}]"#).unwrap_err();
         assert!(err.to_string().contains("expected"));
+    }
+
+    #[test]
+    fn a_json_step_with_a_field_that_is_not_a_string_is_refused() {
+        let err = parse_steps_document(r#"[{"action": 7, "expected": "The list"}]"#).unwrap_err();
+        assert!(err.to_string().contains("action"), "{err}");
+        let err = parse_steps_document(r#"[{"action": "Open", "expected": 7}]"#).unwrap_err();
+        assert!(err.to_string().contains("expected"), "{err}");
+    }
+
+    #[test]
+    fn a_json_object_is_not_a_step_table() {
+        // The step table is a list; a lone object is a mistake that the
+        // error has to name, not a line of text to be read as a step.
+        let err =
+            parse_steps_document(r#"{"action": "Open", "expected": "The list"}"#).unwrap_err();
+        assert!(err.to_string().contains("array of steps"), "{err}");
     }
 
     #[test]
