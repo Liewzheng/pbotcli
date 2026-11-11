@@ -22,6 +22,7 @@
 
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use clap::Subcommand;
 use pbotcli_client::PlaneClient;
@@ -37,6 +38,7 @@ use pbotcli_types::testrun::{
     RUN_CASE_CONCLUSIONS, STEP_VERDICTS, TestRun, TestRunCase, TestRunCaseWrite, TestRunFilters,
     TestRunStepWrite, TestRunWrite,
 };
+use regex::Regex;
 use serde_json::Value;
 
 use crate::render::{
@@ -528,8 +530,14 @@ impl Evidence {
 /// `testcase_validity.py`): the value has to carry a text **of its own**.
 /// A placeholder (`—`, `待补充`, `TBD`, …) carries none, and a value that
 /// holds nothing but an image (`![](shot.png)`) carries none either — a
-/// picture is a file, not a sentence. So the CLI says "the evidence is
-/// missing" exactly when the server will refuse the batch.
+/// picture is a file, not a sentence. The value is read the way the
+/// server reads it, and the table of
+/// `the_evidence_rule_is_the_rule_of_the_server` pins the answer of the
+/// server for the shapes that matter.
+///
+/// The residue: a shape of Markdown that neither of the two reads the
+/// same would leave the notice wrong. The notice only ever warns, and
+/// the server still refuses the batch and names the case.
 fn evidence_shape(text: Option<&str>, has_file: bool) -> Evidence {
     let has_text = text.is_some_and(carries_text);
     match (has_text, has_file) {
@@ -580,39 +588,81 @@ fn is_placeholder(text: &str) -> bool {
 
 /// The text a Markdown value carries of its own.
 ///
-/// The markup is taken away the way the server takes it away: a picture
-/// is a file and carries no text — not even its alt text — and the
-/// destination of a link is not text either: `[text](url)` says `text`.
-/// The emphasis of a text is not what the text says, so `**不一致**`
-/// carries the text `不一致`.
-///
-/// The value is read the way the server reads it, and a value it cannot
-/// make sense of is read as text: an unterminated picture (`![a`) is
-/// text, and a mark that stands alone (`TBD*`) is text as well.
+/// The value is read the way the server reads it (the `markdown_text` of
+/// `db/testcase_validity.py`): the content of a code span and of a code
+/// block is a quotation — the server reads it as text and never looks
+/// for a picture inside it — and the rest is markup: the pictures are
+/// taken out, the inline HTML is dropped, the destination of a link is
+/// dropped, and the emphasis of a text is not what the text says.
 fn markdown_text(value: &str) -> String {
-    let without_pictures = strip_pictures(value);
-    let without_destinations = strip_destinations(&without_pictures);
-    strip_marks(&without_destinations)
-}
-
-/// Remove the pictures: `![alt](url)` is a file, not a sentence.
-fn strip_pictures(value: &str) -> String {
     let mut text = String::new();
     let mut rest = value;
-    while let Some(start) = rest.find("![") {
-        text.push_str(&rest[..start]);
-        match rest[start..].find(')') {
-            Some(end) => rest = &rest[start + end + 1..],
+    // The literal parts go first: a code span and a code block are
+    // quotations, and a picture inside one is part of the quotation.
+    while let Some(start) = rest.find('`') {
+        text.push_str(&read_markup(&rest[..start]));
+        let literal = &rest[start..];
+        let ticks = literal.chars().take_while(|c| *c == '`').count();
+        let fence = "`".repeat(ticks);
+        match literal[ticks..].find(&fence) {
+            Some(end) => {
+                text.push_str(&literal[ticks..ticks + end]);
+                rest = &literal[ticks + end + ticks..];
+            }
             None => {
-                // An unterminated picture is text, not a picture.
-                text.push_str(&rest[start..]);
+                // An unterminated code span is text.
+                text.push_str(literal);
                 rest = "";
                 break;
             }
         }
     }
-    text.push_str(rest);
+    text.push_str(&read_markup(rest));
     text
+}
+
+/// The text of a part that carries markup.
+fn read_markup(part: &str) -> String {
+    let without_pictures = strip_pictures(part);
+    let without_html = strip_html(&without_pictures);
+    let without_destinations = strip_destinations(&without_html);
+    strip_marks(&without_destinations)
+}
+
+/// Take the pictures out of a part of markup.
+///
+/// The shapes are the ones of the server (`_LOOSE_IMAGE_RE`): an inline
+/// picture that is closed — its destination may hold spaces and balanced
+/// parentheses —, an inline picture that was never closed (the token
+/// ends at the first blank, so the words behind it stay text) and a
+/// reference-style picture. The shortcut form `![alt]` is literal text,
+/// like on the server.
+fn strip_pictures(part: &str) -> String {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        // The three shapes of `_LOOSE_IMAGE_RE` of the server, in one
+        // pattern: a closed inline picture (the destination may hold
+        // spaces and balanced parentheses), an inline picture that was
+        // never closed (the token ends at the first blank) and a
+        // reference-style picture.
+        Regex::new(r"!\[[^\]\n]*\]\((?:[^()\n]|\([^()\n]*\))*\)|!\[[^\]\n]*\]\([^)\s\n]*|!\[[^\]\n]*\]\[[^\]\n]*\]").expect("the picture pattern of the server is valid")
+    })
+    .replace_all(part, " ")
+    .into_owned()
+}
+
+/// Take the inline HTML out of a part of markup.
+///
+/// The server drops the HTML nodes of its parse: `<b>` and `</b>` are
+/// markup, not text.
+fn strip_html(part: &str) -> String {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"</?[A-Za-z][^>\n]*>|<!--[^\n]*-->|<![^>\n]*>")
+            .expect("the tag pattern is valid")
+    })
+    .replace_all(part, "")
+    .into_owned()
 }
 
 /// Remove the destination of a link: `[text](url)` says `text`.
@@ -1558,6 +1608,89 @@ mod tests {
             evidence_shape(Some("![](shot.png)"), true),
             Evidence::Attachment
         );
+    }
+
+    #[test]
+    fn the_evidence_rule_is_the_rule_of_the_server() {
+        // The values and the answers of the server: `is_filled_markdown`
+        // of `db/testcase_validity.py` (mistune 3.4.0, the version the
+        // server pins) over the same values. The CLI has to answer the
+        // same, so a tester learns at write time what the server will
+        // say at finalize.
+        let cases: [(&str, bool); 63] = [
+            ("—", false),
+            ("待补充", false),
+            ("TBD", false),
+            ("tbd", false),
+            ("...", false),
+            ("???", false),
+            ("xxx", false),
+            ("  —  ", false),
+            ("![](shot.png)", false),
+            ("**TBD**", false),
+            ("_TBD_", false),
+            ("TBD*", true),
+            ("![](a.png error 42", true),
+            ("[the report](url)", true),
+            ("— (the device stayed silent)", true),
+            ("**不一致**", true),
+            ("`TBD` is not a text", true),
+            ("a_b_c", true),
+            ("   ", false),
+            ("", false),
+            ("the password was refused", true),
+            ("see the report", true),
+            ("![](Screenshot (1).png)", false),
+            ("![shot](shot.png", false),
+            ("![alt][ref]", false),
+            ("![](a(b).png)", false),
+            ("<b>**</b>", false),
+            ("`![](x.png)`", true),
+            ("![alt](shot.png)", false),
+            ("![alt]()", false),
+            ("![alt]", true),
+            ("![alt] [ref]", true),
+            ("*emphasis* text", true),
+            ("# heading", true),
+            ("> quote", true),
+            ("text with <b>bold</b> markup", true),
+            ("```\ncode\n```", true),
+            ("``code with ` tick``", true),
+            ("5 < 6 and 7 > 8", true),
+            ("![alt](url) text", true),
+            ("text ![alt](url) more", true),
+            ("- item", true),
+            ("1. item", true),
+            ("TBD.", true),
+            (".", false),
+            ("TODO", false),
+            ("n/a", true),
+            ("N/A", true),
+            ("待定", false),
+            ("![alt][ref] more text", true),
+            ("![](a b.png) and text", true),
+            ("![](a.png", false),
+            ("![](a.png) trailing", true),
+            ("text with ![img](x.png) inline", true),
+            ("| a | b |", true),
+            ("**", false),
+            ("__", false),
+            ("***", false),
+            ("![a](b(c)d.png)", false),
+            ("![](x.png)![](y.png)", false),
+            ("text\n\n---\n\nmore", true),
+            ("<!-- comment -->", false),
+            ("<!DOCTYPE html>", false),
+        ];
+        for (value, filled) in cases {
+            let shape = evidence_shape(Some(value), false);
+            assert_eq!(
+                shape != Evidence::None,
+                filled,
+                "the server reads {value:?} as {}",
+                if filled { "evidence" } else { "no evidence" }
+            );
+        }
     }
 
     #[test]
