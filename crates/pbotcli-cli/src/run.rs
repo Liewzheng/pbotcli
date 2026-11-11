@@ -999,7 +999,7 @@ async fn cmd_run_step(
     client: &PlaneClient,
     run: &str,
     case: &str,
-    step: i64,
+    step_number: i64,
     verdict: &str,
     actual: Option<&str>,
     actual_file: Option<&Path>,
@@ -1011,9 +1011,9 @@ async fn cmd_run_step(
     // The flags are checked before anything is resolved, so a wrong
     // verdict never reaches the server.
     let verdict = normalize_step_verdict(verdict)?;
-    if step < 1 {
+    if step_number < 1 {
         return Err(PlaneError::validation_with_hint(
-            format!("Invalid step number '{step}'."),
+            format!("Invalid step number '{step_number}'."),
             "The steps of a case are numbered from 1 (`pbot run show <RUN>` lists them).",
         ));
     }
@@ -1022,7 +1022,7 @@ async fn cmd_run_step(
     // non-interactive caller has to pass --yes.
     refuse_unconfirmable(
         yes,
-        &format!("The verdict {verdict} of step {step} of {case} in {run}"),
+        &format!("The verdict {verdict} of step {step_number} of {case} in {run}"),
     )?;
 
     let project = require_project(client, project).await?;
@@ -1030,7 +1030,7 @@ async fn cmd_run_step(
     let record = require_run_case(&found, case)?;
     if !yes {
         confirm_on_terminal(&format!(
-            "The verdict {verdict} of step {step} of {} in {}",
+            "The verdict {verdict} of step {step_number} of {} in {}",
             record.case_number, found.number
         ))?;
     }
@@ -1040,7 +1040,7 @@ async fn cmd_run_step(
     let mut evidence = None;
     if let Some(path) = image {
         let step_record = client
-            .get_test_run_step(&project.id, &found.id, &record.id, step)
+            .get_test_run_step(&project.id, &found.id, &record.id, step_number)
             .await?;
         evidence = Some(
             upload_image(
@@ -1054,10 +1054,21 @@ async fn cmd_run_step(
         );
     }
     // A failed step needs a measured value; the server refuses the
-    // batch without one at finalize, so the tester is told now.
-    if verdict == "fail"
-        && evidence_shape(actual_value.as_deref(), evidence.is_some()) == Evidence::None
-    {
+    // batch without one at finalize, so the tester is told now. The
+    // value the step already carries counts — the measured value stays
+    // writable while the batch is open.
+    let current = record
+        .steps
+        .iter()
+        .find(|step| step.sequence_id == step_number);
+    let measured = actual_value
+        .as_deref()
+        .or_else(|| current.map(|step| step.actual_value.as_str()));
+    let has_file = evidence.is_some()
+        || current
+            .map(|step| !step.attachments.is_empty())
+            .unwrap_or(false);
+    if verdict == "fail" && evidence_shape(measured, has_file) == Evidence::None {
         eprintln!(
             "warning: a failed step needs a measured value before the batch can be closed (the server refuses it with fail_without_actual_value). Pass --actual/--actual-file, or --image."
         );
@@ -1068,13 +1079,13 @@ async fn cmd_run_step(
         actual_value,
     };
     let written = client
-        .update_test_run_step(&project.id, &found.id, &record.id, step, &write)
+        .update_test_run_step(&project.id, &found.id, &record.id, step_number, &write)
         .await?;
     if json {
         output_json(&crate::render::test_run_step_view(&written));
     } else {
         eprintln!(
-            "Wrote the verdict {verdict} of step {step} of {} in {}.",
+            "Wrote the verdict {verdict} of step {step_number} of {} in {}.",
             record.case_number, found.number
         );
     }
