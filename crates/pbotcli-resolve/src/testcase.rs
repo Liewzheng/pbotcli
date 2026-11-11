@@ -140,37 +140,26 @@ pub async fn resolve_test_case_module(
 mod tests {
     use super::*;
 
-    fn case(number: &str, title: &str) -> TestCase {
+    fn case(number: &str) -> TestCase {
         TestCase {
             id: format!("id-{number}"),
             number: number.to_string(),
-            title: title.to_string(),
             ..Default::default()
         }
     }
 
     #[test]
-    fn a_module_code_is_matched_case_insensitively() {
-        let modules = [TestCaseModule {
-            id: "m1".into(),
-            code: "CLI".into(),
-            description: "The command line of pbot".into(),
-            ..Default::default()
-        }];
-        let found = modules
-            .iter()
-            .find(|module| module.code.eq_ignore_ascii_case("cli"))
-            .expect("the code matches whatever its case");
-        assert_eq!(found.id, "m1");
+    fn a_number_is_matched_whatever_the_case_of_its_letters() {
+        let cases = [case("TC-CLI-001"), case("TC-CLI-002")];
+        let found = exact_number(&cases, "tc-cli-002").expect("the number matches");
+        assert_eq!(found.id, "id-TC-CLI-002");
+        assert!(exact_number(&cases, "TC-CLI-003").is_none());
     }
 
     #[test]
-    fn a_case_carries_its_number_and_its_title() {
-        let cases = [case("TC-CLI-001", "Log in with a valid account")];
-        let found = cases
-            .iter()
-            .find(|c| c.number.eq_ignore_ascii_case("tc-cli-001"))
-            .expect("the number matches whatever its case");
-        assert_eq!(found.id, "id-TC-CLI-001");
+    fn a_number_that_is_not_there_is_not_matched() {
+        let cases = [case("TC-CLI-001")];
+        assert!(exact_number(&cases, "TC-PWR-001").is_none());
+        assert!(exact_number(&cases, "").is_none());
     }
 }

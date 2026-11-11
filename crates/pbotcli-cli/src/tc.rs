@@ -85,23 +85,25 @@ pub enum TcCmd {
         /// Title of the case.
         #[arg(long)]
         title: String,
-        /// What the case checks.
+        /// What the case checks. The server refuses a case without it.
         #[arg(long)]
-        purpose: Option<String>,
-        /// What is under test.
-        #[arg(long, visible_alias = "object-overview")]
-        object_overview: Option<String>,
-        /// Priority: P0, P1, P2, P3.
+        purpose: String,
+        /// What is under test. The server refuses a case without it.
         #[arg(long)]
-        priority: Option<String>,
-        /// What has to hold before the case runs.
+        object_overview: String,
+        /// Priority: P0, P1, P2, P3. The server refuses a case without one.
+        #[arg(long)]
+        priority: String,
+        /// What has to hold before the case runs. The server refuses a case
+        /// without it.
         #[arg(long, visible_alias = "preconditions")]
-        precondition: Option<String>,
-        /// The environment and the version under test.
+        precondition: String,
+        /// The environment and the version under test. The server refuses a
+        /// case without it.
         #[arg(long, visible_alias = "env")]
-        environment: Option<String>,
+        environment: String,
         /// The feature the case belongs to.
-        #[arg(long, visible_alias = "related-feature")]
+        #[arg(long)]
         related_feature: Option<String>,
         /// Free-form remarks.
         #[arg(long)]
@@ -140,7 +142,7 @@ pub enum TcCmd {
         #[arg(long)]
         purpose: Option<String>,
         /// New object overview.
-        #[arg(long, visible_alias = "object-overview")]
+        #[arg(long)]
         object_overview: Option<String>,
         /// New priority: P0, P1, P2, P3.
         #[arg(long)]
@@ -152,7 +154,7 @@ pub enum TcCmd {
         #[arg(long, visible_alias = "env")]
         environment: Option<String>,
         /// New related feature.
-        #[arg(long, visible_alias = "related-feature")]
+        #[arg(long)]
         related_feature: Option<String>,
         /// New remarks.
         #[arg(long)]
@@ -311,14 +313,14 @@ pub async fn dispatch(client: &PlaneClient, command: TcCmd, json: bool) -> Resul
             step,
             steps_file,
         } => {
-            let opts = TcCaseWrite {
-                module: Some(module.as_str()),
-                title: Some(title.as_str()),
-                purpose: purpose.as_deref(),
-                object_overview: object_overview.as_deref(),
-                priority: priority.as_deref(),
-                precondition: precondition.as_deref(),
-                environment: environment.as_deref(),
+            let opts = TcCaseCreate {
+                module: &module,
+                title: &title,
+                purpose: &purpose,
+                object_overview: &object_overview,
+                priority: &priority,
+                precondition: &precondition,
+                environment: &environment,
                 related_feature: related_feature.as_deref(),
                 remarks: remarks.as_deref(),
                 status: status.as_deref(),
@@ -359,8 +361,7 @@ pub async fn dispatch(client: &PlaneClient, command: TcCmd, json: bool) -> Resul
                     "The server assigns the number of a case; it is part of the record of every run.",
                 ));
             }
-            let opts = TcCaseWrite {
-                module: None,
+            let opts = TcCaseUpdate {
                 title: title.as_deref(),
                 purpose: purpose.as_deref(),
                 object_overview: object_overview.as_deref(),
@@ -430,10 +431,34 @@ pub async fn dispatch(client: &PlaneClient, command: TcCmd, json: bool) -> Resul
     }
 }
 
-/// The fields of a case write, gathered so the handler signatures stay
+/// The fields of a case create, gathered so the handler signatures stay
 /// small.
-struct TcCaseWrite<'a> {
-    module: Option<&'a str>,
+///
+/// Every one of the header fields is mandatory: the server refuses a case
+/// without a title, a purpose, an object overview, the preconditions, the
+/// environment and a priority, so the CLI asks for them too and its
+/// `--help` tells the truth.
+struct TcCaseCreate<'a> {
+    module: &'a str,
+    title: &'a str,
+    purpose: &'a str,
+    object_overview: &'a str,
+    priority: &'a str,
+    precondition: &'a str,
+    environment: &'a str,
+    related_feature: Option<&'a str>,
+    remarks: Option<&'a str>,
+    status: Option<&'a str>,
+    step: &'a [String],
+    steps_file: Option<&'a std::path::Path>,
+}
+
+/// The fields of a case update, gathered so the handler signatures stay
+/// small.
+///
+/// Every one of them is optional: the server keeps the value the case
+/// carries for the fields that are not sent.
+struct TcCaseUpdate<'a> {
     title: Option<&'a str>,
     purpose: Option<&'a str>,
     object_overview: Option<&'a str>,
@@ -600,21 +625,101 @@ fn collect_steps(
     Ok(Some(steps))
 }
 
-/// The write body of a case, built from the flags the user gave.
-fn case_write(opts: &TcCaseWrite<'_>, steps: Option<Vec<TestCaseStepWrite>>) -> TestCaseWrite {
-    TestCaseWrite {
-        module: opts.module.map(str::to_string),
+/// The write body of a create, built from the flags the user gave.
+fn create_write(
+    opts: &TcCaseCreate<'_>,
+    steps: Vec<TestCaseStepWrite>,
+) -> Result<TestCaseWrite, PlaneError> {
+    Ok(TestCaseWrite {
+        module: Some(opts.module.to_string()),
+        title: Some(opts.title.to_string()),
+        purpose: Some(opts.purpose.to_string()),
+        object_overview: Some(opts.object_overview.to_string()),
+        priority: Some(normalize_case_priority(opts.priority)?),
+        preconditions: Some(opts.precondition.to_string()),
+        environment: Some(opts.environment.to_string()),
+        related_feature: opts.related_feature.map(str::to_string),
+        remarks: opts.remarks.map(str::to_string),
+        status: normalize_case_status(opts.status)?,
+        steps: Some(steps),
+    })
+}
+
+/// The write body of an update, built from the flags the user gave.
+fn update_write(
+    opts: &TcCaseUpdate<'_>,
+    steps: Option<Vec<TestCaseStepWrite>>,
+) -> Result<TestCaseWrite, PlaneError> {
+    Ok(TestCaseWrite {
+        module: None,
         title: opts.title.map(str::to_string),
         purpose: opts.purpose.map(str::to_string),
         object_overview: opts.object_overview.map(str::to_string),
-        priority: opts.priority.map(str::to_string),
+        priority: match opts.priority {
+            Some(priority) => Some(normalize_case_priority(priority)?),
+            None => None,
+        },
         preconditions: opts.precondition.map(str::to_string),
         environment: opts.environment.map(str::to_string),
         related_feature: opts.related_feature.map(str::to_string),
         remarks: opts.remarks.map(str::to_string),
-        status: opts.status.map(str::to_string),
+        status: normalize_case_status(opts.status)?,
         steps,
+    })
+}
+
+/// The priorities the server accepts (P0, P1, P2, P3).
+const CASE_PRIORITIES: [&str; 4] = ["P0", "P1", "P2", "P3"];
+
+/// The statuses the server accepts (active, void).
+const CASE_STATUSES: [&str; 2] = ["active", "void"];
+
+/// Normalize a `--priority` flag. The server accepts P0 to P3 and stores
+/// them uppercased.
+fn normalize_case_priority(value: &str) -> Result<String, PlaneError> {
+    let upper = value.trim().to_uppercase();
+    if CASE_PRIORITIES.contains(&upper.as_str()) {
+        return Ok(upper);
     }
+    Err(PlaneError::validation_with_hint(
+        format!("Invalid priority '{value}'."),
+        format!("Valid values: {}.", CASE_PRIORITIES.join(", ")),
+    ))
+}
+
+/// Normalize a `--status` flag. The server accepts `active` and `void` and
+/// stores them lowercased.
+fn normalize_case_status(value: Option<&str>) -> Result<Option<String>, PlaneError> {
+    let Some(value) = value else { return Ok(None) };
+    let lower = value.trim().to_lowercase();
+    if CASE_STATUSES.contains(&lower.as_str()) {
+        return Ok(Some(lower));
+    }
+    Err(PlaneError::validation_with_hint(
+        format!("Invalid status '{value}'."),
+        format!("Valid values: {}.", CASE_STATUSES.join(", ")),
+    ))
+}
+
+/// The step table of a create: the server refuses a case without a step, so
+/// the CLI refuses it before the request.
+fn require_steps(
+    steps: Option<Vec<TestCaseStepWrite>>,
+) -> Result<Vec<TestCaseStepWrite>, PlaneError> {
+    let hint = "Pass --step \"action | expected result\" (or a --steps-file that holds one).";
+    let Some(steps) = steps else {
+        return Err(PlaneError::validation_with_hint(
+            "A test case needs at least one step.",
+            hint,
+        ));
+    };
+    if steps.is_empty() {
+        return Err(PlaneError::validation_with_hint(
+            "A test case needs at least one step.",
+            hint,
+        ));
+    }
+    Ok(steps)
 }
 
 /// Resolve a work item of the project to its uuid — the endpoint of the
@@ -653,7 +758,13 @@ async fn cmd_tc_list(
         search: search.map(str::to_string),
     };
     let mut cases = client.list_test_cases(&project.id, &filters).await?;
+    let total = cases.len();
     cases.truncate(limit);
+    // A list that hides rows without saying so is the one place where the
+    // output and the reality diverge.
+    if cases.len() < total {
+        eprintln!("Showing {} of {} test cases.", cases.len(), total);
+    }
     if json {
         let views: Vec<Value> = cases.iter().map(test_case_view).collect();
         output_json(&views);
@@ -748,16 +859,17 @@ async fn cmd_tc_show(
 async fn cmd_tc_create(
     client: &PlaneClient,
     project: Option<&str>,
-    opts: &TcCaseWrite<'_>,
+    opts: &TcCaseCreate<'_>,
     json: bool,
 ) -> Result<(), PlaneError> {
-    let steps = collect_steps(opts.step, opts.steps_file)?;
+    let steps = require_steps(collect_steps(opts.step, opts.steps_file)?)?;
+    // The body is built before the project is resolved, so a priority the
+    // server would refuse is refused here as well.
+    let mut write = create_write(opts, steps)?;
     let project = require_project(client, project).await?;
     // The write carries the uuid of the module; the code is what the user
     // types, so it is resolved first.
-    let module =
-        resolve_test_case_module(client, &project.id, opts.module.unwrap_or_default()).await?;
-    let mut write = case_write(opts, steps);
+    let module = resolve_test_case_module(client, &project.id, opts.module).await?;
     write.module = Some(module.id);
     let created = client.create_test_case(&project.id, &write).await?;
     output_case_written(&created, "Created", json);
@@ -768,11 +880,11 @@ async fn cmd_tc_update(
     client: &PlaneClient,
     case: &str,
     project: Option<&str>,
-    opts: &TcCaseWrite<'_>,
+    opts: &TcCaseUpdate<'_>,
     json: bool,
 ) -> Result<(), PlaneError> {
     let steps = collect_steps(opts.step, opts.steps_file)?;
-    let write = case_write(opts, steps);
+    let write = update_write(opts, steps)?;
     // An update without a field would be a write of nothing: the server
     // would answer 200 and the record would stay as it is. The refusal
     // happens before any request.
@@ -784,10 +896,39 @@ async fn cmd_tc_update(
     }
     let project = require_project(client, project).await?;
     let found = resolve_test_case(client, &project.id, case).await?;
+    // A step table is replaced as a whole, so the rows that are not in the
+    // new table are dropped — the same notice the `tc steps` command
+    // gives, so no path replaces a table silently.
+    if let Some(steps) = &write.steps {
+        announce_step_replacement(client, &project.id, &found, steps.len()).await?;
+    }
     let updated = client
         .update_test_case(&project.id, &found.id, &write)
         .await?;
     output_case_written(&updated, "Updated", json);
+    Ok(())
+}
+
+/// Say how many rows a replacement of the step table drops.
+///
+/// The table is replaced as a whole, so a shorter table drops rows. The
+/// replacement is documented, not prompted (ADR-0008) — but it is never
+/// silent: the row count of the table is said out loud before the write.
+async fn announce_step_replacement(
+    client: &PlaneClient,
+    project_id: &str,
+    case: &TestCase,
+    new_count: usize,
+) -> Result<(), PlaneError> {
+    let current = client.list_test_case_steps(project_id, &case.id).await?;
+    if current.len() != new_count {
+        eprintln!(
+            "Replacing the {} step(s) of {} with {} step(s).",
+            current.len(),
+            case.number,
+            new_count
+        );
+    }
     Ok(())
 }
 
@@ -839,18 +980,8 @@ async fn cmd_tc_steps(
             "Pass --step \"action | expected result\" (or a --steps-file that holds one).",
         ));
     }
-    // The table is replaced as a whole, so a shorter table drops rows. The
-    // replacement is documented, not prompted (ADR-0008) — but it is never
-    // silent: the row count of the table is said out loud before the write.
-    let current = client.list_test_case_steps(&project.id, &found.id).await?;
-    if current.len() != steps.len() {
-        eprintln!(
-            "Replacing the {} step(s) of {} with {} step(s).",
-            current.len(),
-            found.number,
-            steps.len()
-        );
-    }
+    // The table is replaced as a whole, so a shorter table drops rows.
+    announce_step_replacement(client, &project.id, &found, steps.len()).await?;
     let body = TestCaseStepsWrite { steps };
     let result = client
         .replace_test_case_steps(&project.id, &found.id, &body)

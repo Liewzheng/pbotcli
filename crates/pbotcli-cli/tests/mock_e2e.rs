@@ -2995,18 +2995,38 @@ fn tc_ls_json_contract() {
     );
     let parsed: serde_json::Value = serde_json::from_str(&stdout_of(&out)).expect("valid JSON");
     let row = &parsed[0];
-    // The number is the name of a case and the server assigns it.
-    assert_eq!(row["number"], "TC-CLI-001");
-    assert_eq!(row["module_code"], "CLI");
-    assert_eq!(row["priority"], "P1");
-    assert_eq!(row["status"], "active");
-    assert_eq!(row["steps"][0]["sequence_id"], 1);
+    // The whole view is pinned, not a few fields of it: the keys of the
+    // `--json` output are a contract (ADR-0005), so a renamed key has to
+    // break a test.
     assert_eq!(
-        row["steps"][0]["expected_result"],
-        "The login form is shown"
+        row,
+        &serde_json::json!({
+            "id": "tc1",
+            "number": "TC-CLI-001",
+            "module": "m1",
+            "module_code": "CLI",
+            "title": "Log in with a valid account",
+            "purpose": "Make sure the login path works",
+            "object_overview": "The login form",
+            "priority": "P1",
+            "preconditions": "The account exists",
+            "environment": "Windows 10",
+            "related_feature": "",
+            "remarks": "",
+            "status": "active",
+            "steps": [{
+                "id": "s1",
+                "sequence_id": 1,
+                "action": "Start pbot",
+                "expected_result": "The login form is shown"
+            }],
+            "issue_links": [],
+            "created_at": "2026-11-10T08:29:37Z",
+            "updated_at": "2026-11-10T08:29:37Z",
+            "created_by": "Jicai Liu",
+        }),
+        "the whole view of a case is pinned"
     );
-    assert_eq!(row["issue_links"].as_array().unwrap().len(), 0);
-    assert_eq!(row["created_by"], "Jicai Liu");
     // The table goes to stderr, the JSON to stdout.
     assert!(String::from_utf8_lossy(&out.stderr).is_empty());
 }
@@ -3157,13 +3177,16 @@ fn tc_create_prints_the_number_the_server_assigned() {
     mock_tc_reads(&mut server);
     let m = server
         .mock("POST", "/api/v1/workspaces/ws/projects/p1/test-cases/")
-        // The body is pinned exactly: the CLI sends the module, the title
+        // The body is pinned exactly: the CLI sends the module, the header
         // and the steps, and nothing else — in particular no number.
         .match_body(Matcher::Json(serde_json::json!({
             "module": "m1",
             "title": "Log in with a valid account",
             "purpose": "Make sure the login path works",
+            "object_overview": "The login form",
             "priority": "P1",
+            "preconditions": "The account exists",
+            "environment": "Windows 10",
             "steps": [{"action": "Start pbot", "expected_result": "The login form is shown"}],
         })))
         .with_status(201)
@@ -3183,8 +3206,14 @@ fn tc_create_prints_the_number_the_server_assigned() {
             "Log in with a valid account",
             "--purpose",
             "Make sure the login path works",
+            "--object-overview",
+            "The login form",
             "--priority",
             "P1",
+            "--precondition",
+            "The account exists",
+            "--environment",
+            "Windows 10",
             "--step",
             "Start pbot | The login form is shown",
             "--no-cache",
@@ -3210,6 +3239,11 @@ fn tc_create_reads_the_steps_from_a_json_file() {
         .match_body(Matcher::Json(serde_json::json!({
             "module": "m1",
             "title": "A case",
+            "purpose": "Make sure the login path works",
+            "object_overview": "The login form",
+            "priority": "P1",
+            "preconditions": "The account exists",
+            "environment": "Windows 10",
             "steps": [
                 {"action": "Start pbot", "expected_result": "The login form is shown"},
                 {"action": "Log in", "expected_result": "The dashboard is shown"}
@@ -3240,6 +3274,16 @@ fn tc_create_reads_the_steps_from_a_json_file() {
             "CLI",
             "--title",
             "A case",
+            "--purpose",
+            "Make sure the login path works",
+            "--object-overview",
+            "The login form",
+            "--priority",
+            "P1",
+            "--precondition",
+            "The account exists",
+            "--environment",
+            "Windows 10",
             "--steps-file",
             path.to_str().unwrap(),
             "--no-cache",
@@ -3279,6 +3323,16 @@ fn tc_create_reports_the_reason_code_of_a_refused_case() {
             "CLI",
             "--title",
             "A case",
+            "--purpose",
+            "Make sure the login path works",
+            "--object-overview",
+            "The login form",
+            "--priority",
+            "P1",
+            "--precondition",
+            "The account exists",
+            "--environment",
+            "Windows 10",
             "--step",
             "Start pbot | works normally",
             "--no-cache",
@@ -3322,6 +3376,18 @@ fn tc_a_conflict_with_a_stable_code_reads_like_the_same_code_from_a_400() {
             "CLI",
             "--title",
             "A case",
+            "--purpose",
+            "Make sure the login path works",
+            "--object-overview",
+            "The login form",
+            "--priority",
+            "P1",
+            "--precondition",
+            "The account exists",
+            "--environment",
+            "Windows 10",
+            "--step",
+            "Start pbot | The login form is shown",
             "--no-cache",
         ],
         &server.url(),
@@ -3359,6 +3425,18 @@ fn tc_reports_the_missing_evidence_of_a_batch() {
             "CLI",
             "--title",
             "A case",
+            "--purpose",
+            "Make sure the login path works",
+            "--object-overview",
+            "The login form",
+            "--priority",
+            "P1",
+            "--precondition",
+            "The account exists",
+            "--environment",
+            "Windows 10",
+            "--step",
+            "Start pbot | The login form is shown",
             "--no-cache",
         ],
         &server.url(),
@@ -3398,7 +3476,15 @@ fn tc_update_writes_only_the_fields_that_were_given() {
     mock_tc_reads(&mut server);
     let m = server
         .mock("PATCH", "/api/v1/workspaces/ws/projects/p1/test-cases/tc1/")
-        .match_body(Matcher::Json(serde_json::json!({"title": "A new title"})))
+        // The body is pinned exactly: the five fields that were given, and
+        // none of the ones that were not.
+        .match_body(Matcher::Json(serde_json::json!({
+            "title": "A new title",
+            "purpose": "A new purpose",
+            "environment": "Linux",
+            "related_feature": "The login path",
+            "remarks": "Checked on the desktop client",
+        })))
         .with_status(200)
         .with_header("content-type", "application/json")
         .with_body(TC_CASE)
@@ -3413,6 +3499,14 @@ fn tc_update_writes_only_the_fields_that_were_given() {
             "Demo",
             "--title",
             "A new title",
+            "--purpose",
+            "A new purpose",
+            "--environment",
+            "Linux",
+            "--related-feature",
+            "The login path",
+            "--remarks",
+            "Checked on the desktop client",
             "--no-cache",
         ],
         &server.url(),
@@ -3949,6 +4043,18 @@ fn tc_create_refuses_a_module_code_that_is_not_registered() {
             "NOPE",
             "--title",
             "A case",
+            "--purpose",
+            "Make sure the login path works",
+            "--object-overview",
+            "The login form",
+            "--priority",
+            "P1",
+            "--precondition",
+            "The account exists",
+            "--environment",
+            "Windows 10",
+            "--step",
+            "Start pbot | The login form is shown",
             "--no-cache",
         ],
         &server.url(),
@@ -3990,4 +4096,291 @@ fn tc_issues_reports_the_link_that_is_already_there() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("issue_link_exists"), "{err}");
     assert!(err.contains("该工作项已经关联到这个用例。"), "{err}");
+}
+
+/// Two cases, so the limit of the list has something to cut.
+const TC_CASES_TWO: &str = r#"{"results":[{"id":"tc1","number":"TC-CLI-001","module":"m1","module_code":"CLI","title":"Log in with a valid account","purpose":"Make sure the login path works","object_overview":"The login form","priority":"P1","preconditions":"The account exists","environment":"Windows 10","related_feature":"","remarks":"","status":"active","steps":[{"id":"s1","sequence_id":1,"action":"Start pbot","expected_result":"The login form is shown"}],"issue_links":[],"created_at":"2026-11-10T08:29:37Z","updated_at":"2026-11-10T08:29:37Z","created_by":{"id":"u1","display_name":"Jicai.Liu","first_name":"Jicai","last_name":"Liu"}},{"id":"tc2","number":"TC-CLI-002","module":"m1","module_code":"CLI","title":"Log out again","purpose":"Make sure the way out works","object_overview":"The dashboard","priority":"P2","preconditions":"The user is logged in","environment":"Windows 10","related_feature":"","remarks":"","status":"active","steps":[{"id":"s2","sequence_id":1,"action":"Open the menu","expected_result":"The way out is there"}],"issue_links":[],"created_at":"2026-11-10T08:30:37Z","updated_at":"2026-11-10T08:30:37Z","created_by":{"id":"u1","display_name":"Jicai.Liu","first_name":"Jicai","last_name":"Liu"}}],"next_cursor":null,"next_page_results":false}"#;
+
+#[test]
+fn tc_create_sends_every_header_flag() {
+    let mut server = Server::new();
+    mock_tc_reads(&mut server);
+    // Every write field of the case is pinned by name: a typo in the
+    // serializer (or in the body builder) would turn a flag into a no-op,
+    // and the server would swallow the unknown key without a word.
+    let m = server
+        .mock("POST", "/api/v1/workspaces/ws/projects/p1/test-cases/")
+        .match_body(Matcher::Json(serde_json::json!({
+            "module": "m1",
+            "title": "A case",
+            "purpose": "Make sure the login path works",
+            "object_overview": "The login form",
+            "priority": "P1",
+            "preconditions": "The account exists",
+            "environment": "Windows 10",
+            "related_feature": "The login path",
+            "remarks": "Checked on the desktop client",
+            "status": "active",
+            "steps": [{"action": "Start pbot", "expected_result": "The login form is shown"}],
+        })))
+        .with_status(201)
+        .with_header("content-type", "application/json")
+        .with_body(TC_CASE)
+        .create();
+
+    let out = run(
+        &[
+            "tc",
+            "create",
+            "-p",
+            "Demo",
+            "--module",
+            "CLI",
+            "--title",
+            "A case",
+            "--purpose",
+            "Make sure the login path works",
+            "--object-overview",
+            "The login form",
+            "--priority",
+            "P1",
+            "--precondition",
+            "The account exists",
+            "--env",
+            "Windows 10",
+            "--related-feature",
+            "The login path",
+            "--remarks",
+            "Checked on the desktop client",
+            "--status",
+            "active",
+            "--step",
+            "Start pbot | The login form is shown",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    m.assert();
+}
+
+#[test]
+fn tc_create_needs_at_least_one_step() {
+    // No endpoint is mocked: the refusal happens before any request.
+    let server = Server::new();
+
+    let out = run(
+        &[
+            "tc",
+            "create",
+            "-p",
+            "Demo",
+            "--module",
+            "CLI",
+            "--title",
+            "A case",
+            "--purpose",
+            "p",
+            "--object-overview",
+            "o",
+            "--priority",
+            "P1",
+            "--precondition",
+            "c",
+            "--environment",
+            "e",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert_eq!(out.status.code(), Some(5));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("at least one step"), "{err}");
+    assert!(err.contains("--step"), "{err}");
+}
+
+#[test]
+fn tc_create_refuses_a_priority_the_server_does_not_know() {
+    let server = Server::new();
+
+    let out = run(
+        &[
+            "tc",
+            "create",
+            "-p",
+            "Demo",
+            "--module",
+            "CLI",
+            "--title",
+            "A case",
+            "--purpose",
+            "p",
+            "--object-overview",
+            "o",
+            "--priority",
+            "P9",
+            "--precondition",
+            "c",
+            "--environment",
+            "e",
+            "--step",
+            "Start pbot | The login form is shown",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert_eq!(out.status.code(), Some(5));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("Invalid priority 'P9'"), "{err}");
+    assert!(err.contains("P0, P1, P2, P3"), "{err}");
+}
+
+#[test]
+fn tc_update_says_how_many_rows_the_step_replacement_drops() {
+    let mut server = Server::new();
+    mock_tc_reads(&mut server);
+    // The table of the case holds one step and the update sends two.
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/test-cases/tc1/steps/",
+        TC_STEPS,
+    );
+    let m = server
+        .mock("PATCH", "/api/v1/workspaces/ws/projects/p1/test-cases/tc1/")
+        .match_body(Matcher::Json(serde_json::json!({
+            "steps": [
+                {"action": "Start pbot", "expected_result": "The login form is shown"},
+                {"action": "Log in", "expected_result": "The dashboard is shown"}
+            ]
+        })))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(TC_CASE)
+        .create();
+
+    let out = run(
+        &[
+            "tc",
+            "update",
+            "TC-CLI-001",
+            "-p",
+            "Demo",
+            "--step",
+            "Start pbot | The login form is shown",
+            "--step",
+            "Log in | The dashboard is shown",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("Replacing the 1 step(s) of TC-CLI-001 with 2 step(s)."),
+        "the replacement of a step table is never silent: {err}"
+    );
+    m.assert();
+}
+
+#[test]
+fn tc_ls_cuts_the_rows_at_the_limit_and_says_so() {
+    let mut server = Server::new();
+    mock_list(&mut server, "/api/v1/workspaces/ws/projects/", PROJECTS);
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/test-cases/",
+        TC_CASES_TWO,
+    );
+
+    let out = run(
+        &["tc", "ls", "-p", "Demo", "-l", "1", "--json", "--no-cache"],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout_of(&out)).expect("valid JSON");
+    assert_eq!(parsed.as_array().unwrap().len(), 1);
+    assert_eq!(parsed[0]["number"], "TC-CLI-001");
+    // A list that hides rows without saying so is the one place where the
+    // output and the reality diverge.
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("Showing 1 of 2 test cases."), "{err}");
+}
+
+#[test]
+fn tc_ls_shows_every_row_when_the_limit_cuts_nothing() {
+    let mut server = Server::new();
+    mock_list(&mut server, "/api/v1/workspaces/ws/projects/", PROJECTS);
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/test-cases/",
+        TC_CASES_TWO,
+    );
+
+    let out = run(
+        &["tc", "ls", "-p", "Demo", "-l", "10", "--json", "--no-cache"],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout_of(&out)).expect("valid JSON");
+    assert_eq!(parsed.as_array().unwrap().len(), 2);
+    assert!(!String::from_utf8_lossy(&out.stderr).contains("Showing"));
+}
+
+#[test]
+fn tc_create_help_offers_no_flag_that_is_its_own_alias() {
+    // A flag whose alias is its own name is noise in the discovery surface:
+    // `--object-overview` is not an alias of `--object-overview`.
+    for command in [["tc", "create", "--help"], ["tc", "update", "--help"]] {
+        let out = run(&command, "http://127.0.0.1:1");
+        assert!(out.status.success(), "{command:?}");
+        let help = stdout_of(&out);
+        assert!(help.contains("[alias: --preconditions]"), "{help}");
+        assert!(help.contains("[alias: --env]"), "{help}");
+        assert!(!help.contains("[alias: --object-overview]"), "{help}");
+        assert!(!help.contains("[alias: --related-feature]"), "{help}");
+    }
+}
+
+#[test]
+fn tc_create_help_makes_the_mandatory_fields_mandatory() {
+    let out = run(&["tc", "create", "--help"], "http://127.0.0.1:1");
+    assert!(out.status.success());
+    let help = stdout_of(&out);
+    // The server refuses a case without these six, so the usage line has
+    // to ask for them. (The options list mentions every flag either way,
+    // so the usage line is what the assertion looks at.)
+    let usage = help
+        .lines()
+        .find(|line| line.starts_with("Usage:"))
+        .expect("the help has a usage line");
+    for flag in [
+        "--module <MODULE>",
+        "--title <TITLE>",
+        "--purpose <PURPOSE>",
+        "--object-overview <OBJECT_OVERVIEW>",
+        "--priority <PRIORITY>",
+        "--precondition <PRECONDITION>",
+        "--environment <ENVIRONMENT>",
+    ] {
+        assert!(
+            usage.contains(flag),
+            "{flag} is missing from the usage line"
+        );
+    }
 }

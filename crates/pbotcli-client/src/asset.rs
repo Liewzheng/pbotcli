@@ -72,14 +72,16 @@ impl PlaneClient {
     /// Upload an image as the evidence of a test record.
     ///
     /// The bytes go through the whole chain: register the upload (which
-    /// binds the file to the record when `entity_identifier` is given),
-    /// push them to the presigned target, mark the asset uploaded and read
-    /// it back — a 2xx is not proof that the write landed (ADR-0007).
+    /// binds the file to the record), push them to the presigned target,
+    /// mark the asset uploaded and read it back — a 2xx is not proof that
+    /// the write landed (ADR-0007).
     ///
-    /// `entity_identifier` is the id of the record the file belongs to. A
-    /// file that has no record yet (the case side, where the record is a
-    /// batch record that does not exist yet) is registered unbound: the
-    /// server keeps it for a later bind.
+    /// `entity_identifier` is the id of the record the file belongs to, and
+    /// it is not optional: the upload **is** the bind. The file hangs on
+    /// the record from the moment it is registered, and a second bind
+    /// would be refused with `asset_already_bound` — the file has one
+    /// owner. A caller that has no record yet has nothing to attach the
+    /// file to.
     pub async fn upload_test_evidence(
         &self,
         project_id: &str,
@@ -87,20 +89,18 @@ impl PlaneClient {
         mime: &str,
         bytes: Vec<u8>,
         entity_type: &str,
-        entity_identifier: Option<&str>,
+        entity_identifier: &str,
     ) -> Result<AssetUpload, PlaneError> {
         ensure_test_evidence_mime(mime)?;
         let size = bytes.len() as u64;
-        let mut body = serde_json::json!({
+        let body = serde_json::json!({
             "name": file_name,
             "type": mime,
             "size": size,
             "entity_type": entity_type,
+            "entity_identifier": entity_identifier,
             "project_id": project_id,
         });
-        if let Some(identifier) = entity_identifier {
-            body["entity_identifier"] = Value::String(identifier.to_string());
-        }
         let path = format!("/api/v1/workspaces/{}/assets/", self.workspace);
         let created: AssetUpload = self
             .request_json_with(
@@ -216,7 +216,7 @@ mod tests {
                 "image/png",
                 b"data".to_vec(),
                 ENTITY_TYPE_STEP_RECORD,
-                Some("rec1"),
+                "rec1",
             )
             .await
             .unwrap();
@@ -246,7 +246,7 @@ mod tests {
                 "text/plain",
                 b"log".to_vec(),
                 ENTITY_TYPE_CASE_EVIDENCE,
-                Some("rec1"),
+                "rec1",
             )
             .await
             .unwrap_err();
