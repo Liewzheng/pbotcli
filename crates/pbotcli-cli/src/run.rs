@@ -603,15 +603,15 @@ fn markdown_text(value: &str) -> String {
         text.push_str(&read_markup(&rest[..start]));
         let literal = &rest[start..];
         let ticks = literal.chars().take_while(|c| *c == '`').count();
-        let fence = "`".repeat(ticks);
-        match literal[ticks..].find(&fence) {
+        match closing_fence(&literal[ticks..], ticks) {
             Some(end) => {
                 text.push_str(&literal[ticks..ticks + end]);
                 rest = &literal[ticks + end + ticks..];
             }
             None => {
-                // An unterminated code span is text.
-                text.push_str(literal);
+                // An unterminated code span is text of the parse, so the
+                // pictures inside it are pictures of the text.
+                text.push_str(&read_markup(literal));
                 rest = "";
                 break;
             }
@@ -619,6 +619,29 @@ fn markdown_text(value: &str) -> String {
     }
     text.push_str(&read_markup(rest));
     text
+}
+
+/// The place where a code span ends.
+///
+/// A code span opened with `n` backticks ends at the next run of
+/// exactly `n` backticks — a longer run is not its end (CommonMark).
+fn closing_fence(text: &str, ticks: usize) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'`' {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < bytes.len() && bytes[index] == b'`' {
+            index += 1;
+        }
+        if index - start == ticks {
+            return Some(start);
+        }
+    }
+    None
 }
 
 /// The text of a part that carries markup.
@@ -658,7 +681,7 @@ fn strip_pictures(part: &str) -> String {
 fn strip_html(part: &str) -> String {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(r"</?[A-Za-z][^>\n]*>|<!--[^\n]*-->|<![^>\n]*>")
+        Regex::new(r"</?[A-Za-z][^>\n]*>|<!--[^\n]*-->|<\?[^>\n]*\?>|<![^>\n]*>")
             .expect("the tag pattern is valid")
     })
     .replace_all(part, "")
@@ -1617,7 +1640,7 @@ mod tests {
         // server pins) over the same values. The CLI has to answer the
         // same, so a tester learns at write time what the server will
         // say at finalize.
-        let cases: [(&str, bool); 63] = [
+        let cases: [(&str, bool); 83] = [
             ("—", false),
             ("待补充", false),
             ("TBD", false),
@@ -1681,6 +1704,26 @@ mod tests {
             ("text\n\n---\n\nmore", true),
             ("<!-- comment -->", false),
             ("<!DOCTYPE html>", false),
+            ("```code```", true),
+            ("```code``", true),
+            ("`a `` b`", true),
+            ("`![](x.png)", true),
+            ("`TBD", true),
+            ("<b>TBD</b>", false),
+            ("<TBD>", false),
+            ("<?php echo 1; ?>", false),
+            ("<a href='x'>TBD</a>", false),
+            ("text <!-- c --> more", true),
+            ("5 < 6 and 7 > 8", true),
+            ("<not a tag", true),
+            ("a<b>c", true),
+            ("![alt](url)TBD", false),
+            ("TBD![alt](url)", false),
+            ("![](x.png)TBD", false),
+            ("``a ` b``", true),
+            ("`` TBD ``", false),
+            ("text `code` more", true),
+            ("```\nTBD\n```", false),
         ];
         for (value, filled) in cases {
             let shape = evidence_shape(Some(value), false);
