@@ -26,6 +26,7 @@ use std::path::{Path, PathBuf};
 use clap::Subcommand;
 use pbotcli_client::PlaneClient;
 use pbotcli_client::asset::{ENTITY_TYPE_CASE_EVIDENCE, ENTITY_TYPE_STEP_RECORD};
+use pbotcli_client::tcerror::carries_code;
 use pbotcli_core::PlaneError;
 use pbotcli_format::{output_json, output_table};
 use pbotcli_resolve::testcase::resolve_test_case;
@@ -91,7 +92,7 @@ pub enum RunCmd {
         /// The environment the batch ran in.
         #[arg(long, visible_alias = "env")]
         environment: String,
-        /// The day of the execution (default: today).
+        /// The day of the execution (default: today, in UTC).
         #[arg(long = "run-date", value_name = "YYYY-MM-DD")]
         run_date: Option<String>,
         /// The batch this one re-tests (number or UUID). A re-test runs
@@ -650,19 +651,33 @@ fn refuse_unconfirmable(yes: bool, subject: &str) -> Result<(), PlaneError> {
 ///
 /// The prompt goes to stderr: stdout carries the JSON of `--json`.
 fn confirm_on_terminal(subject: &str) -> Result<(), PlaneError> {
+    confirm_with(subject, &mut std::io::stdin().lock())
+}
+
+/// The confirmation of a write, read from a reader.
+///
+/// The answer is one line: `y` (or `yes`) confirms the write, every
+/// other answer — an empty one included — refuses it. The write is
+/// never made when the answer is refused.
+fn confirm_with(subject: &str, input: &mut impl std::io::BufRead) -> Result<(), PlaneError> {
     use std::io::Write;
 
     eprint!("{subject} — write it? [y/N] ");
     let _ = std::io::stderr().flush();
     let mut line = String::new();
-    let _ = std::io::stdin().read_line(&mut line);
-    match line.trim().to_lowercase().as_str() {
-        "y" | "yes" => Ok(()),
-        _ => Err(PlaneError::validation_with_hint(
-            "Aborted: nothing was written.",
-            "Run the command again and answer y to confirm the write.",
-        )),
+    let _ = input.read_line(&mut line);
+    if is_confirmation(&line) {
+        return Ok(());
     }
+    Err(PlaneError::validation_with_hint(
+        "Aborted: nothing was written.",
+        "Run the command again and answer y to confirm the write.",
+    ))
+}
+
+/// True when the answer confirms the write.
+fn is_confirmation(answer: &str) -> bool {
+    matches!(answer.trim().to_lowercase().as_str(), "y" | "yes")
 }
 
 /// Today, as the batch number counts it.
@@ -739,15 +754,6 @@ fn server_sentences(err: &PlaneError) -> String {
         .filter(|text| !text.is_empty())
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-/// True when the error of the server carries the stable code `code`.
-///
-/// The typed error of the workspace carries the code of the refusal
-/// inside its message (the mapper prints it first), so a caller that
-/// has to act on one code reads it from there.
-fn carries_code(err: &PlaneError, code: &str) -> bool {
-    err.to_string().contains(code)
 }
 
 async fn cmd_run_list(
@@ -1423,6 +1429,35 @@ mod tests {
         assert!(message.contains("duplicate_case_number"), "{message}");
         assert!(message.contains("TC-CLI-007"), "{message}");
         assert!(message.contains("RUN-20261109-01"), "{message}");
+    }
+
+    #[test]
+    fn the_answer_of_the_confirmation_decides_the_write() {
+        // The answer is read as it was typed: the case of the letters
+        // does not matter, and every other answer refuses the write.
+        assert!(is_confirmation("y"));
+        assert!(is_confirmation("Y"));
+        assert!(is_confirmation("yes"));
+        assert!(is_confirmation("yes\n"));
+        assert!(!is_confirmation("n"));
+        assert!(!is_confirmation("no"));
+        assert!(!is_confirmation(""));
+        assert!(!is_confirmation("yeah"));
+    }
+
+    #[test]
+    fn a_confirmed_write_goes_through_and_a_refused_one_writes_nothing() {
+        let confirmed = confirm_with("The verdict fail of step 3", &mut "y\n".as_bytes());
+        assert!(confirmed.is_ok(), "{confirmed:?}");
+        let refused = confirm_with("The verdict fail of step 3", &mut "n\n".as_bytes())
+            .expect_err("an answer that is not y refuses the write");
+        assert_eq!(refused.exit_code(), pbotcli_core::errors::EXIT_VALIDATION);
+        let message = refused.to_string();
+        assert!(message.contains("Aborted"), "{message}");
+        // An empty answer is a refusal as well: the default is "no".
+        let empty = confirm_with("The verdict fail of step 3", &mut "".as_bytes())
+            .expect_err("an empty answer refuses the write");
+        assert!(empty.to_string().contains("Aborted"));
     }
 
     #[test]

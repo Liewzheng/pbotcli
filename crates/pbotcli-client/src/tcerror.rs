@@ -295,6 +295,20 @@ fn hint_for(envelope: &ErrorEnvelope) -> String {
     "Fix what the server reported and run the command again.".to_string()
 }
 
+/// True when the error of the server carries the stable code `code`.
+///
+/// The typed error of the workspace carries the code of the refusal in
+/// its message: the mapper prints the code of the refusal first and the
+/// code of every problem with it. A caller that has to act on one code
+/// reads it from there — this function is the one place that does, and
+/// it matches the code as a word and not as a part of one.
+pub fn carries_code(error: &PlaneError, code: &str) -> bool {
+    error
+        .to_string()
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .any(|token| token == code)
+}
+
 /// Map a failure of the test-case feature onto the typed error of the
 /// workspace.
 ///
@@ -581,6 +595,18 @@ mod tests {
         assert_eq!(err.exit_code(), pbotcli_core::errors::EXIT_VALIDATION);
         let hint = err.hint().expect("a hint");
         assert!(hint.contains("--retest-of"), "{hint}");
+    }
+
+    #[test]
+    fn the_code_of_a_refusal_is_found_in_the_message() {
+        let body = r#"{"error":"The test case is already in this batch.","code":"duplicate_case_number","errors":[
+            {"code":"duplicate_case_number","message":"同一个用例在批次中重复出现。"}]}"#;
+        let err = map_testcase_error(409, body);
+        assert!(carries_code(&err, "duplicate_case_number"));
+        // The code is matched as a word: a longer code that holds it is
+        // not the code.
+        assert!(!carries_code(&err, "duplicate"));
+        assert!(!carries_code(&err, "run_completed"));
     }
 
     #[test]
