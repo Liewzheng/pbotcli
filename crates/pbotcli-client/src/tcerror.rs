@@ -179,6 +179,22 @@ fn server_text(body: &str, envelope: Option<&ErrorEnvelope>) -> String {
     crate::snippet_or_redact(body.trim())
 }
 
+/// The stable codes of a refusal, as a suffix for the message: the code of
+/// the refusal and the codes of its entries.
+///
+/// A permission failure carries its code in the envelope, and the code is
+/// what a caller keys on — so it stays visible next to the remedy.
+fn codes_suffix(envelope: Option<&ErrorEnvelope>) -> String {
+    let Some(envelope) = envelope else {
+        return String::new();
+    };
+    let codes = envelope.codes();
+    if codes.is_empty() {
+        return String::new();
+    }
+    format!(" ({})", codes.join(", "))
+}
+
 /// The message of a refusal: the stable code, then one entry per problem
 /// with its place and the sentence the server shows for it.
 fn format_envelope(envelope: &ErrorEnvelope, status: u16) -> String {
@@ -256,13 +272,15 @@ pub fn map_testcase_error(status: u16, body: &str) -> PlaneError {
     match status {
         401 => PlaneError::Auth {
             message: format!(
-                "Authentication failed (HTTP 401): {}",
+                "Authentication failed (HTTP 401){}: {}",
+                codes_suffix(envelope.as_ref()),
                 server_text(body, envelope.as_ref())
             ),
         },
         403 => PlaneError::Auth {
             message: format!(
-                "Permission denied (HTTP 403): {}",
+                "Permission denied (HTTP 403){}: {}",
+                codes_suffix(envelope.as_ref()),
                 server_text(body, envelope.as_ref())
             ),
         },
@@ -277,6 +295,19 @@ pub fn map_testcase_error(status: u16, body: &str) -> PlaneError {
             Some(envelope) => PlaneError::Validation {
                 message: format_envelope(envelope, status),
                 hint: Some(hint_for(envelope)),
+            },
+            // A 409 of this API is a conflict or a refusal of the write, not
+            // a transport failure — so it belongs to the class of the
+            // validation failures even when the server names no reason.
+            None if status == 409 => PlaneError::Validation {
+                message: format!(
+                    "The server refused the write (HTTP 409): {}",
+                    server_text(body, envelope.as_ref())
+                ),
+                hint: Some(
+                    "The server named no reason; the record may have changed — read it again and try again."
+                        .to_string(),
+                ),
             },
             None => PlaneError::Api {
                 message: format!(
@@ -371,6 +402,45 @@ mod tests {
                 .to_string()
                 .contains("同一个用例在批次中重复出现。")
         );
+    }
+
+    #[test]
+    fn a_conflict_without_a_code_is_a_refusal_and_not_a_transport_failure() {
+        // A 409 of this API is a conflict or a refusal of the write, so it
+        // belongs to the class of the validation failures — even when the
+        // server names no reason.
+        let err = map_testcase_error(409, r#"{"detail":"The record was changed."}"#);
+        assert_eq!(err.exit_code(), pbotcli_core::errors::EXIT_VALIDATION);
+        assert!(err.to_string().contains("HTTP 409"));
+        assert!(err.to_string().contains("The record was changed."));
+    }
+
+    #[test]
+    fn a_permission_failure_keeps_its_code_and_its_remedy() {
+        let body = r#"{"detail":"Service principal 'Bot' lacks scope for read test_case. Manage scopes.","code":"test_case_scope_missing","errors":[{"code":"test_case_scope_missing","message":"缺少 test_case 的 scope。"}]}"#;
+        let err = map_testcase_error(403, body);
+        // The class is the permission one …
+        assert_eq!(err.exit_code(), pbotcli_core::errors::EXIT_AUTH);
+        let message = err.to_string();
+        // … the stable code is visible …
+        assert!(message.contains("test_case_scope_missing"), "{message}");
+        // … and the remedy of the server survives verbatim.
+        assert!(message.contains("Manage scopes."), "{message}");
+    }
+
+    #[test]
+    fn a_permission_failure_without_a_code_keeps_its_shape() {
+        let err = map_testcase_error(
+            403,
+            r#"{"detail":"Only a project admin can delete a test case."}"#,
+        );
+        assert_eq!(err.exit_code(), pbotcli_core::errors::EXIT_AUTH);
+        let message = err.to_string();
+        assert!(
+            message.starts_with("Permission denied (HTTP 403): "),
+            "{message}"
+        );
+        assert!(message.contains("Only a project admin can delete a test case."));
     }
 
     #[test]

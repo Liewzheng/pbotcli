@@ -3285,7 +3285,7 @@ fn tc_create_reads_the_steps_from_a_json_file() {
             "--environment",
             "Windows 10",
             "--steps-file",
-            path.to_str().unwrap(),
+            path.to_string_lossy().as_ref(),
             "--no-cache",
         ],
         &server.url(),
@@ -3903,6 +3903,11 @@ fn tc_update_without_a_field_is_refused_before_any_request() {
 fn tc_steps_refuses_an_empty_table() {
     let mut server = Server::new();
     mock_tc_reads(&mut server);
+    // An empty file of its own — `/dev/null` does not exist on Windows.
+    let dir = std::env::temp_dir().join(format!("pbotcli_tc_empty_table_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let path = dir.join("steps.json");
+    std::fs::write(&path, "").expect("write the steps file");
 
     let out = run(
         &[
@@ -3912,11 +3917,12 @@ fn tc_steps_refuses_an_empty_table() {
             "-p",
             "Demo",
             "--steps-file",
-            "/dev/null",
+            path.to_string_lossy().as_ref(),
             "--no-cache",
         ],
         &server.url(),
     );
+    std::fs::remove_dir_all(&dir).ok();
     assert_eq!(out.status.code(), Some(5));
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("at least one step"), "{err}");
@@ -3941,7 +3947,8 @@ fn tc_steps_says_how_many_rows_the_replacement_drops() {
         .create();
 
     // The table of the case holds one step and the replacement holds one
-    // too, so nothing is said.
+    // too — but the operation still replaces the whole table, so it is
+    // still said out loud.
     let out = run(
         &[
             "tc",
@@ -3960,7 +3967,12 @@ fn tc_steps_says_how_many_rows_the_replacement_drops() {
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(!String::from_utf8_lossy(&out.stderr).contains("Replacing"));
+    assert!(
+        String::from_utf8_lossy(&out.stderr)
+            .contains("Replacing the 1 step(s) of TC-CLI-001 with 1 step(s)."),
+        "the replacement of a step table is never silent: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
     // A table of two steps against a table of one says what it replaces.
     let out = run(
@@ -4389,7 +4401,7 @@ fn tc_create_help_makes_the_mandatory_fields_mandatory() {
 fn tc_update_refuses_an_empty_step_table() {
     let mut server = Server::new();
     mock_tc_reads(&mut server);
-    let dir = std::env::temp_dir().join(format!("pbotcli_tc_empty_{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("pbotcli_tc_empty_update_{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("temp dir");
     let path = dir.join("steps.json");
     std::fs::write(&path, "[]").expect("write the steps file");
@@ -4402,7 +4414,7 @@ fn tc_update_refuses_an_empty_step_table() {
             "-p",
             "Demo",
             "--steps-file",
-            path.to_str().unwrap(),
+            path.to_string_lossy().as_ref(),
             "--no-cache",
         ],
         &server.url(),
@@ -4599,4 +4611,186 @@ fn tc_delete_answers_with_json_when_it_is_asked_for() {
     assert_eq!(parsed["number"], "TC-CLI-001");
     assert_eq!(parsed["deleted"], true);
     m.assert();
+}
+
+#[test]
+fn tc_steps_announces_a_replacement_with_the_same_number_of_rows() {
+    // The rows of the new table are new rows, even when there are as many
+    // of them as before: the operation replaces the table as a whole, so it
+    // is announced.
+    let mut server = Server::new();
+    mock_tc_reads(&mut server);
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/test-cases/tc1/steps/",
+        TC_STEPS,
+    );
+    server
+        .mock("PUT", "/api/v1/workspaces/ws/projects/p1/test-cases/tc1/steps/")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"updated_at":"2026-11-11T00:00:00Z","steps":[{"id":"s9","sequence_id":1,"action":"Open the dashboard","expected_result":"The list is shown"}]}"#,
+        )
+        .create();
+
+    let out = run(
+        &[
+            "tc",
+            "steps",
+            "TC-CLI-001",
+            "-p",
+            "Demo",
+            "--step",
+            "Open the dashboard | The list is shown",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("Replacing the 1 step(s) of TC-CLI-001 with 1 step(s)."),
+        "{err}"
+    );
+}
+
+#[test]
+fn tc_update_announces_a_replacement_with_the_same_number_of_rows() {
+    let mut server = Server::new();
+    mock_tc_reads(&mut server);
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/test-cases/tc1/steps/",
+        TC_STEPS,
+    );
+    server
+        .mock("PATCH", "/api/v1/workspaces/ws/projects/p1/test-cases/tc1/")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(TC_CASE)
+        .create();
+
+    let out = run(
+        &[
+            "tc",
+            "update",
+            "TC-CLI-001",
+            "-p",
+            "Demo",
+            "--step",
+            "Open the dashboard | The list is shown",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("Replacing the 1 step(s) of TC-CLI-001 with 1 step(s)."),
+        "the update replaces the whole table as well: {err}"
+    );
+}
+
+#[test]
+fn tc_a_conflict_without_a_code_is_a_refusal_and_not_a_transport_failure() {
+    let mut server = Server::new();
+    mock_tc_reads(&mut server);
+    server
+        .mock("POST", "/api/v1/workspaces/ws/projects/p1/test-cases/")
+        .with_status(409)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"detail":"The record was changed by somebody else."}"#)
+        .create();
+
+    let out = run(
+        &[
+            "tc",
+            "create",
+            "-p",
+            "Demo",
+            "--module",
+            "CLI",
+            "--title",
+            "A case",
+            "--purpose",
+            "p",
+            "--object-overview",
+            "o",
+            "--priority",
+            "P1",
+            "--precondition",
+            "c",
+            "--environment",
+            "e",
+            "--step",
+            "Start pbot | The login form is shown",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    // A conflict is a refusal of the write (exit 5), not a transport
+    // failure (exit 4) — even when the server names no reason.
+    assert_eq!(out.status.code(), Some(5));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("HTTP 409"), "{err}");
+    assert!(
+        err.contains("The record was changed by somebody else."),
+        "{err}"
+    );
+}
+
+#[test]
+fn tc_a_permission_failure_with_a_code_keeps_the_code_and_the_remedy() {
+    let mut server = Server::new();
+    // Only the project list is mocked: the list of the cases answers the
+    // refusal (mockito answers with the first matching mock).
+    mock_list(&mut server, "/api/v1/workspaces/ws/projects/", PROJECTS);
+    let remedy = "Service principal 'Bot' lacks scope for read test_case in project p1. A workspace admin must add the required scope for this service principal at Workspace settings -> Developer -> Service principals -> Manage scopes.";
+    server
+        .mock("GET", "/api/v1/workspaces/ws/projects/p1/test-cases/")
+        .match_query(Matcher::Any)
+        .with_status(403)
+        .with_header("content-type", "application/json")
+        .with_body(
+            serde_json::json!({
+                "detail": remedy,
+                "code": "test_case_scope_missing",
+                "errors": [{"code": "test_case_scope_missing", "message": "缺少 test_case 的 scope。"}],
+            })
+            .to_string(),
+        )
+        .create();
+
+    let out = run(&["tc", "ls", "-p", "Demo", "--no-cache"], &server.url());
+    // A permission failure stays exit 2 …
+    assert_eq!(out.status.code(), Some(2));
+    let err = String::from_utf8_lossy(&out.stderr);
+    // … the stable code is visible …
+    assert!(err.contains("test_case_scope_missing"), "{err}");
+    // … and the remedy of the server survives verbatim.
+    assert!(err.contains("Manage scopes."), "{err}");
+}
+
+#[test]
+fn tc_ls_refuses_a_limit_of_zero() {
+    // No endpoint is mocked: the refusal happens before any request.
+    let server = Server::new();
+
+    let out = run(
+        &["tc", "ls", "-p", "Demo", "-l", "0", "--no-cache"],
+        &server.url(),
+    );
+    assert_eq!(out.status.code(), Some(5));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("A limit of zero shows nothing."), "{err}");
+    assert!(err.contains("-l/--limit 1 or more"), "{err}");
 }

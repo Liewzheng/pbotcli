@@ -759,6 +759,12 @@ async fn cmd_tc_list(
     limit: usize,
     json: bool,
 ) -> Result<(), PlaneError> {
+    if limit == 0 {
+        return Err(PlaneError::validation_with_hint(
+            "A limit of zero shows nothing.",
+            "Pass -l/--limit 1 or more (the default is 50).",
+        ));
+    }
     let project = require_project(client, project).await?;
     let issue_id = match issue {
         Some(query) => Some(resolve_issue_id(client, &project, query).await?),
@@ -933,14 +939,15 @@ async fn announce_step_replacement(
     new_count: usize,
 ) -> Result<(), PlaneError> {
     let current = client.list_test_case_steps(project_id, &case.id).await?;
-    if current.len() != new_count {
-        eprintln!(
-            "Replacing the {} step(s) of {} with {} step(s).",
-            current.len(),
-            case.number,
-            new_count
-        );
-    }
+    // The operation always replaces the whole table — even when the new
+    // table has as many rows as the old one, the rows are new. So the
+    // replacement is always said out loud.
+    eprintln!(
+        "Replacing the {} step(s) of {} with {} step(s).",
+        current.len(),
+        case.number,
+        new_count
+    );
     Ok(())
 }
 
