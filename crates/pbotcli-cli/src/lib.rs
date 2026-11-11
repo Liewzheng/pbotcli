@@ -1,6 +1,7 @@
 //! pbotcli — command tree and handlers (Rust rewrite of the Python CLI).
 
 mod render;
+pub mod tc;
 
 /// `skill/SKILL.md` at the repo root, embedded into the binary at compile
 /// time. The relative path `../../skill/SKILL.md` resolves from
@@ -121,6 +122,16 @@ pub enum Command {
     Intake {
         #[command(subcommand)]
         command: IntakeCmd,
+    },
+    /// Manage the test cases of a project.
+    ///
+    /// A case is named by its number (`TC-<module code>-<NNN>`), and the
+    /// server assigns that number — the CLI never builds one. The module
+    /// codes are registered first (`pbot tc module create`).
+    #[command(visible_alias = "test-case", visible_alias = "testcases")]
+    Tc {
+        #[command(subcommand)]
+        command: tc::TcCmd,
     },
     /// Manage documents (pages).
     ///
@@ -1589,6 +1600,7 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                 cmd_doc_delete(&client, &doc, project.as_deref()).await
             }
         },
+        Command::Tc { command } => tc::dispatch(&client, command, cli.json).await,
         Command::Cache { command } => match command {
             CacheCmd::Clear => {
                 Cache::new().clear();
@@ -4990,7 +5002,7 @@ async fn upload_page_image(
     client
         .upload_to_presigned(upload_data, &file.name, &file.mime, bytes)
         .await?;
-    client.confirm_page_asset(&asset_id).await?;
+    client.confirm_asset(&asset_id).await?;
 
     // A 2xx on the confirm PATCH is not proof the write landed (ADR-0007):
     // read the asset back through the v1 workspace-scoped endpoint.

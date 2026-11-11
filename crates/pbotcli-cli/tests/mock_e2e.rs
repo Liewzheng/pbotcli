@@ -2941,3 +2941,803 @@ fn wi_show_without_project_reports_when_every_project_was_skipped() {
     assert!(err.contains("Pass -p <project>"), "{err}");
     assert!(String::from_utf8_lossy(&out.stdout).is_empty(), "{err}");
 }
+
+// ---------------------------------------------------------------------------
+// The `tc` command group: the test cases of a project.
+//
+// The server owns the rules of a case (which fields are mandatory, what a
+// valid expected result is, the format of a module code) and answers a
+// refused write with a stable reason code. The CLI prints that code and the
+// sentence of the server, and the exit code tells a validation failure (5)
+// from a transport or permission failure (4 / 2).
+// ---------------------------------------------------------------------------
+
+const TC_MODULES: &str = r#"[{"id":"m1","code":"CLI","description":"The command line of pbot","created_at":"2026-11-10T08:26:36Z","updated_at":"2026-11-10T08:26:36Z"}]"#;
+const TC_CASES: &str = r#"{"results":[{"id":"tc1","number":"TC-CLI-001","module":"m1","module_code":"CLI","title":"Log in with a valid account","purpose":"Make sure the login path works","object_overview":"The login form","priority":"P1","preconditions":"The account exists","environment":"Windows 10","related_feature":"","remarks":"","status":"active","steps":[{"id":"s1","sequence_id":1,"action":"Start pbot","expected_result":"The login form is shown"}],"issue_links":[],"created_at":"2026-11-10T08:29:37Z","updated_at":"2026-11-10T08:29:37Z","created_by":{"id":"u1","display_name":"Jicai.Liu"}}],"next_cursor":null,"next_page_results":false}"#;
+const TC_CASE: &str = r#"{"id":"tc1","number":"TC-CLI-001","module":"m1","module_code":"CLI","title":"Log in with a valid account","purpose":"Make sure the login path works","object_overview":"The login form","priority":"P1","preconditions":"The account exists","environment":"Windows 10","related_feature":"","remarks":"","status":"active","steps":[{"id":"s1","sequence_id":1,"action":"Start pbot","expected_result":"The login form is shown"}],"issue_links":[],"created_at":"2026-11-10T08:29:37Z","updated_at":"2026-11-10T08:29:37Z","created_by":{"id":"u1","display_name":"Jicai.Liu"}}"#;
+const TC_CASES_WITH_LINK: &str = r#"{"results":[{"id":"tc1","number":"TC-CLI-001","module":"m1","module_code":"CLI","title":"Log in with a valid account","purpose":"Make sure the login path works","object_overview":"The login form","priority":"P1","preconditions":"The account exists","environment":"Windows 10","related_feature":"","remarks":"","status":"active","steps":[{"id":"s1","sequence_id":1,"action":"Start pbot","expected_result":"The login form is shown"}],"issue_links":[{"id":"l1","issue_id":"wi1","issue_identifier":"DEMO-1","issue_name":"A task","created_at":"2026-11-10T08:29:37Z"}],"created_at":"2026-11-10T08:29:37Z","updated_at":"2026-11-10T08:29:37Z","created_by":{"id":"u1","display_name":"Jicai.Liu"}}],"next_cursor":null,"next_page_results":false}"#;
+const TC_STEPS: &str = r#"[{"id":"s1","sequence_id":1,"action":"Start pbot","expected_result":"The login form is shown"}]"#;
+const TC_ISSUES: &str = r#"[{"id":"l1","issue_id":"wi1","issue_identifier":"DEMO-1","issue_name":"A task","created_at":"2026-11-10T08:29:37Z"}]"#;
+
+/// The reads every `tc` command makes before it touches the feature.
+fn mock_tc_reads(server: &mut Server) {
+    mock_list(server, "/api/v1/workspaces/ws/projects/", PROJECTS);
+    mock_list(
+        server,
+        "/api/v1/workspaces/ws/projects/p1/test-case-modules/",
+        TC_MODULES,
+    );
+    mock_list(
+        server,
+        "/api/v1/workspaces/ws/projects/p1/test-cases/",
+        TC_CASES,
+    );
+    mock_list(
+        server,
+        "/api/v1/workspaces/ws/projects/p1/work-items/",
+        ITEMS,
+    );
+}
+
+#[test]
+fn tc_ls_json_contract() {
+    let mut server = Server::new();
+    mock_tc_reads(&mut server);
+
+    let out = run(
+        &["tc", "ls", "-p", "Demo", "--json", "--no-cache"],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout_of(&out)).expect("valid JSON");
+    let row = &parsed[0];
+    // The number is the name of a case and the server assigns it.
+    assert_eq!(row["number"], "TC-CLI-001");
+    assert_eq!(row["module_code"], "CLI");
+    assert_eq!(row["priority"], "P1");
+    assert_eq!(row["status"], "active");
+    assert_eq!(row["steps"][0]["sequence_id"], 1);
+    assert_eq!(
+        row["steps"][0]["expected_result"],
+        "The login form is shown"
+    );
+    assert_eq!(row["issue_links"].as_array().unwrap().len(), 0);
+    assert_eq!(row["created_by"], "Jicai.Liu");
+    // The table goes to stderr, the JSON to stdout.
+    assert!(String::from_utf8_lossy(&out.stderr).is_empty());
+}
+
+#[test]
+fn tc_ls_sends_the_filters_to_the_server() {
+    let mut server = Server::new();
+    mock_list(&mut server, "/api/v1/workspaces/ws/projects/", PROJECTS);
+    let m = server
+        .mock("GET", "/api/v1/workspaces/ws/projects/p1/test-cases/")
+        .match_query(Matcher::AllOf(vec![
+            Matcher::UrlEncoded("module".to_string(), "CLI".to_string()),
+            Matcher::UrlEncoded("priority".to_string(), "P1".to_string()),
+            Matcher::UrlEncoded("status".to_string(), "all".to_string()),
+            Matcher::UrlEncoded("search".to_string(), "login".to_string()),
+        ]))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(TC_CASES)
+        .create();
+
+    let out = run(
+        &[
+            "tc",
+            "ls",
+            "-p",
+            "Demo",
+            "--module",
+            "CLI",
+            "--priority",
+            "P1",
+            "--status",
+            "all",
+            "--search",
+            "login",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    m.assert();
+}
+
+#[test]
+fn tc_show_renders_the_header_the_steps_and_the_links() {
+    let mut server = Server::new();
+    mock_tc_reads(&mut server);
+
+    let out = run(
+        &[
+            "tc",
+            "show",
+            "TC-CLI-001",
+            "-p",
+            "Demo",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout_of(&out)).expect("valid JSON");
+    assert_eq!(parsed["number"], "TC-CLI-001");
+    assert_eq!(parsed["title"], "Log in with a valid account");
+    assert_eq!(parsed["steps"][0]["action"], "Start pbot");
+    assert_eq!(parsed["issue_links"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn tc_show_prints_the_steps_and_the_links_as_tables() {
+    let mut server = Server::new();
+    mock_list(&mut server, "/api/v1/workspaces/ws/projects/", PROJECTS);
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/test-cases/",
+        TC_CASES_WITH_LINK,
+    );
+
+    let out = run(
+        &["tc", "show", "TC-CLI-001", "-p", "Demo", "--no-cache"],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("TC-CLI-001"), "{err}");
+    assert!(err.contains("The login form is shown"), "{err}");
+    assert!(err.contains("DEMO-1"), "{err}");
+    // The table never lands on stdout.
+    assert!(stdout_of(&out).is_empty());
+}
+
+#[test]
+fn tc_create_prints_the_number_the_server_assigned() {
+    let mut server = Server::new();
+    mock_tc_reads(&mut server);
+    let m = server
+        .mock("POST", "/api/v1/workspaces/ws/projects/p1/test-cases/")
+        // The body is pinned exactly: the CLI sends the module, the title
+        // and the steps, and nothing else — in particular no number.
+        .match_body(Matcher::Json(serde_json::json!({
+            "module": "m1",
+            "title": "Log in with a valid account",
+            "purpose": "Make sure the login path works",
+            "priority": "P1",
+            "steps": [{"action": "Start pbot", "expected_result": "The login form is shown"}],
+        })))
+        .with_status(201)
+        .with_header("content-type", "application/json")
+        .with_body(TC_CASE)
+        .create();
+
+    let out = run(
+        &[
+            "tc",
+            "create",
+            "-p",
+            "Demo",
+            "--module",
+            "CLI",
+            "--title",
+            "Log in with a valid account",
+            "--purpose",
+            "Make sure the login path works",
+            "--priority",
+            "P1",
+            "--step",
+            "Start pbot | The login form is shown",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("TC-CLI-001"), "{err}");
+    m.assert();
+}
+
+#[test]
+fn tc_create_reads_the_steps_from_a_json_file() {
+    let mut server = Server::new();
+    mock_tc_reads(&mut server);
+    let m = server
+        .mock("POST", "/api/v1/workspaces/ws/projects/p1/test-cases/")
+        .match_body(Matcher::Json(serde_json::json!({
+            "module": "m1",
+            "title": "A case",
+            "steps": [
+                {"action": "Start pbot", "expected_result": "The login form is shown"},
+                {"action": "Log in", "expected_result": "The dashboard is shown"}
+            ],
+        })))
+        .with_status(201)
+        .with_header("content-type", "application/json")
+        .with_body(TC_CASE)
+        .create();
+
+    let dir = std::env::temp_dir().join(format!("pbotcli_tc_steps_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let path = dir.join("steps.json");
+    std::fs::write(
+        &path,
+        r#"[{"action": "Start pbot", "expected": "The login form is shown"},
+            {"action": "Log in", "expected": "The dashboard is shown"}]"#,
+    )
+    .expect("write the steps file");
+
+    let out = run(
+        &[
+            "tc",
+            "create",
+            "-p",
+            "Demo",
+            "--module",
+            "CLI",
+            "--title",
+            "A case",
+            "--steps-file",
+            path.to_str().unwrap(),
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    std::fs::remove_dir_all(&dir).ok();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    m.assert();
+}
+
+#[test]
+fn tc_create_reports_the_reason_code_of_a_refused_case() {
+    let mut server = Server::new();
+    mock_tc_reads(&mut server);
+    server
+        .mock("POST", "/api/v1/workspaces/ws/projects/p1/test-cases/")
+        .with_status(400)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"error":"The test case is not valid.","code":"invalid_test_case","errors":[
+                {"code":"expected_is_unjudgeable","message":"预期结果必须可观测；正常、正确、无异常这类写法无法判定。","path":"cases[].steps[1].expected_result","field":"expected_result","case_number":null,"step_sequence":1}]}"#,
+        )
+        .create();
+
+    let out = run(
+        &[
+            "tc",
+            "create",
+            "-p",
+            "Demo",
+            "--module",
+            "CLI",
+            "--title",
+            "A case",
+            "--step",
+            "Start pbot | works normally",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    // A validation failure is exit 5 — not the exit code of a transport error.
+    assert_eq!(out.status.code(), Some(5));
+    let err = String::from_utf8_lossy(&out.stderr);
+    // The stable code and the sentence of the server, never a guess of the
+    // CLI's own.
+    assert!(err.contains("invalid_test_case"), "{err}");
+    assert!(err.contains("expected_is_unjudgeable"), "{err}");
+    assert!(err.contains("预期结果必须可观测"), "{err}");
+    assert!(err.contains("step 1"), "{err}");
+}
+
+#[test]
+fn tc_a_conflict_with_a_stable_code_reads_like_the_same_code_from_a_400() {
+    // The same reason may arrive as a 400 or as a 409 (a race). Both are
+    // the same class of failure, so both print the same readable error.
+    let mut server = Server::new();
+    mock_tc_reads(&mut server);
+    server
+        .mock("POST", "/api/v1/workspaces/ws/projects/p1/test-cases/")
+        .with_status(409)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"error":"The case is already in the batch.","code":"invalid_batch","errors":[
+                {"code":"duplicate_case_number","message":"同一个用例在批次中重复出现。","path":"cases[TC-CLI-001]","field":"","case_number":"TC-CLI-001","step_sequence":null}]}"#,
+        )
+        .create();
+
+    let out = run(
+        &[
+            "tc",
+            "create",
+            "-p",
+            "Demo",
+            "--module",
+            "CLI",
+            "--title",
+            "A case",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert_eq!(out.status.code(), Some(5));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("duplicate_case_number"), "{err}");
+    assert!(err.contains("同一个用例在批次中重复出现。"), "{err}");
+    assert!(err.contains("TC-CLI-001"), "{err}");
+}
+
+#[test]
+fn tc_reports_the_missing_evidence_of_a_batch() {
+    // The code of a batch is reported the same way as the code of a case:
+    // the stable code and the sentence of the server.
+    let mut server = Server::new();
+    mock_tc_reads(&mut server);
+    server
+        .mock("POST", "/api/v1/workspaces/ws/projects/p1/test-cases/")
+        .with_status(400)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"error":"The batch is not valid.","code":"invalid_batch","errors":[
+                {"code":"evidence_missing","message":"缺少必填项：证据。","path":"cases[TC-PWR-001].evidence","field":"evidence","case_number":"TC-PWR-001","step_sequence":null}]}"#,
+        )
+        .create();
+
+    let out = run(
+        &[
+            "tc",
+            "create",
+            "-p",
+            "Demo",
+            "--module",
+            "CLI",
+            "--title",
+            "A case",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert_eq!(out.status.code(), Some(5));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("evidence_missing"), "{err}");
+    assert!(err.contains("缺少必填项：证据。"), "{err}");
+    assert!(err.contains("TC-PWR-001"), "{err}");
+}
+
+#[test]
+fn tc_echoes_the_remedy_of_a_permission_failure_verbatim() {
+    let mut server = Server::new();
+    mock_list(&mut server, "/api/v1/workspaces/ws/projects/", PROJECTS);
+    let remedy = "Service principal 'Kimicode IsletspaceWorkstation' lacks scope for read test_case in project p1. A workspace admin must add the required scope for this service principal at Workspace settings -> Developer -> Service principals -> Manage scopes.";
+    server
+        .mock("GET", "/api/v1/workspaces/ws/projects/p1/test-cases/")
+        .match_query(Matcher::Any)
+        .with_status(403)
+        .with_header("content-type", "application/json")
+        .with_body(serde_json::json!({"detail": remedy}).to_string())
+        .create();
+
+    let out = run(&["tc", "ls", "-p", "Demo", "--no-cache"], &server.url());
+    // A permission failure is exit 2 — a script can tell it from a
+    // validation failure (5) and from a transport failure (4).
+    assert_eq!(out.status.code(), Some(2));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("Manage scopes."), "{err}");
+    assert!(err.contains("lacks scope for read test_case"), "{err}");
+}
+
+#[test]
+fn tc_update_writes_only_the_fields_that_were_given() {
+    let mut server = Server::new();
+    mock_tc_reads(&mut server);
+    let m = server
+        .mock("PATCH", "/api/v1/workspaces/ws/projects/p1/test-cases/tc1/")
+        .match_body(Matcher::Json(serde_json::json!({"title": "A new title"})))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(TC_CASE)
+        .create();
+
+    let out = run(
+        &[
+            "tc",
+            "update",
+            "TC-CLI-001",
+            "-p",
+            "Demo",
+            "--title",
+            "A new title",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stderr).contains("TC-CLI-001"));
+    m.assert();
+}
+
+#[test]
+fn tc_update_refuses_to_change_the_module_or_the_number() {
+    let mut server = Server::new();
+    mock_tc_reads(&mut server);
+
+    for (flag, value, expected) in [
+        ("--module", "CLI", "module of a test case cannot be changed"),
+        (
+            "--number",
+            "TC-CLI-002",
+            "number of a test case cannot be changed",
+        ),
+    ] {
+        let out = run(
+            &[
+                "tc",
+                "update",
+                "TC-CLI-001",
+                "-p",
+                "Demo",
+                flag,
+                value,
+                "--no-cache",
+            ],
+            &server.url(),
+        );
+        assert_eq!(out.status.code(), Some(5), "{flag}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains(expected), "{flag}: {err}");
+    }
+}
+
+#[test]
+fn tc_steps_reads_the_step_table() {
+    let mut server = Server::new();
+    mock_tc_reads(&mut server);
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/test-cases/tc1/steps/",
+        TC_STEPS,
+    );
+
+    let out = run(
+        &[
+            "tc",
+            "steps",
+            "TC-CLI-001",
+            "-p",
+            "Demo",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout_of(&out)).expect("valid JSON");
+    assert_eq!(parsed[0]["sequence_id"], 1);
+    assert_eq!(parsed[0]["action"], "Start pbot");
+}
+
+#[test]
+fn tc_steps_replaces_the_whole_table() {
+    let mut server = Server::new();
+    mock_tc_reads(&mut server);
+    let m = server
+        .mock("PUT", "/api/v1/workspaces/ws/projects/p1/test-cases/tc1/steps/")
+        .match_body(Matcher::Json(serde_json::json!({
+            "steps": [
+                {"action": "Start pbot", "expected_result": "The login form is shown"},
+                {"action": "Log in", "expected_result": "The dashboard is shown"}
+            ]
+        })))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"updated_at":"2026-11-11T00:00:00Z","steps":[
+                {"id":"s1","sequence_id":1,"action":"Start pbot","expected_result":"The login form is shown"},
+                {"id":"s2","sequence_id":2,"action":"Log in","expected_result":"The dashboard is shown"}]}"#,
+        )
+        .create();
+
+    let out = run(
+        &[
+            "tc",
+            "steps",
+            "TC-CLI-001",
+            "-p",
+            "Demo",
+            "--step",
+            "Start pbot | The login form is shown",
+            "--step",
+            "Log in | The dashboard is shown",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout_of(&out)).expect("valid JSON");
+    assert_eq!(parsed.as_array().unwrap().len(), 2);
+    assert_eq!(parsed[1]["sequence_id"], 2);
+    m.assert();
+}
+
+#[test]
+fn tc_issues_links_and_unlinks_a_work_item() {
+    let mut server = Server::new();
+    mock_tc_reads(&mut server);
+    let link = server
+        .mock("POST", "/api/v1/workspaces/ws/projects/p1/test-cases/tc1/issues/")
+        .match_body(Matcher::Json(serde_json::json!({"issue_id": "wi1"})))
+        .with_status(201)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"id":"l1","issue_id":"wi1","issue_identifier":"DEMO-1","issue_name":"A task","created_at":"2026-11-10T08:29:37Z"}"#,
+        )
+        .create();
+    let unlink = server
+        .mock(
+            "DELETE",
+            "/api/v1/workspaces/ws/projects/p1/test-cases/tc1/issues/wi1/",
+        )
+        .with_status(204)
+        .create();
+
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/test-cases/tc1/issues/",
+        TC_ISSUES,
+    );
+
+    // Without --add or --remove the links of the case are listed.
+    let out = run(
+        &[
+            "tc",
+            "issues",
+            "TC-CLI-001",
+            "-p",
+            "Demo",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout_of(&out)).expect("valid JSON");
+    assert_eq!(parsed[0]["issue_identifier"], "DEMO-1");
+    assert_eq!(parsed[0]["issue_id"], "wi1");
+
+    let out = run(
+        &[
+            "tc",
+            "issues",
+            "TC-CLI-001",
+            "-p",
+            "Demo",
+            "--add",
+            "DEMO-1",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout_of(&out)).expect("valid JSON");
+    assert_eq!(parsed["issue_identifier"], "DEMO-1");
+    link.assert();
+
+    let out = run(
+        &[
+            "tc",
+            "issues",
+            "TC-CLI-001",
+            "-p",
+            "Demo",
+            "--remove",
+            "DEMO-1",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    unlink.assert();
+}
+
+#[test]
+fn tc_delete_reports_the_permission_failure_of_a_member() {
+    let mut server = Server::new();
+    mock_tc_reads(&mut server);
+    server
+        .mock(
+            "DELETE",
+            "/api/v1/workspaces/ws/projects/p1/test-cases/tc1/",
+        )
+        .with_status(403)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"detail":"Only a project admin can delete a test case."}"#)
+        .create();
+
+    let out = run(
+        &["tc", "delete", "TC-CLI-001", "-p", "Demo", "--no-cache"],
+        &server.url(),
+    );
+    assert_eq!(out.status.code(), Some(2));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("Only a project admin can delete a test case."),
+        "{err}"
+    );
+}
+
+#[test]
+fn tc_delete_removes_a_case() {
+    let mut server = Server::new();
+    mock_tc_reads(&mut server);
+    let m = server
+        .mock(
+            "DELETE",
+            "/api/v1/workspaces/ws/projects/p1/test-cases/tc1/",
+        )
+        .with_status(204)
+        .create();
+
+    let out = run(
+        &["tc", "delete", "TC-CLI-001", "-p", "Demo", "--no-cache"],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stderr).contains("TC-CLI-001"));
+    m.assert();
+}
+
+#[test]
+fn tc_module_ls_lists_the_registered_codes() {
+    let mut server = Server::new();
+    mock_list(&mut server, "/api/v1/workspaces/ws/projects/", PROJECTS);
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/test-case-modules/",
+        TC_MODULES,
+    );
+
+    let out = run(
+        &["tc", "module", "ls", "-p", "Demo", "--json", "--no-cache"],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout_of(&out)).expect("valid JSON");
+    assert_eq!(parsed[0]["code"], "CLI");
+    assert_eq!(parsed[0]["description"], "The command line of pbot");
+}
+
+#[test]
+fn tc_module_create_registers_a_code() {
+    let mut server = Server::new();
+    mock_list(&mut server, "/api/v1/workspaces/ws/projects/", PROJECTS);
+    let m = server
+        .mock("POST", "/api/v1/workspaces/ws/projects/p1/test-case-modules/")
+        .match_body(Matcher::Json(serde_json::json!({
+            "code": "PWR",
+            "description": "The power modes",
+        })))
+        .with_status(201)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"id":"m2","code":"PWR","description":"The power modes","created_at":"2026-11-10T08:26:36Z","updated_at":"2026-11-10T08:26:36Z"}"#,
+        )
+        .create();
+
+    let out = run(
+        &[
+            "tc",
+            "module",
+            "create",
+            "-p",
+            "Demo",
+            "--code",
+            "PWR",
+            "--description",
+            "The power modes",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stderr).contains("PWR"));
+    m.assert();
+}
+
+#[test]
+fn tc_module_create_reports_the_code_of_a_refused_module_code() {
+    let mut server = Server::new();
+    mock_list(&mut server, "/api/v1/workspaces/ws/projects/", PROJECTS);
+    server
+        .mock("POST", "/api/v1/workspaces/ws/projects/p1/test-case-modules/")
+        .with_status(400)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"error":"The module code is not valid.","code":"module_code_format","errors":[
+                {"code":"module_code_format","message":"模块码必须是 2 至 6 位大写字母。","path":"code","field":"code"}]}"#,
+        )
+        .create();
+
+    let out = run(
+        &[
+            "tc",
+            "module",
+            "create",
+            "-p",
+            "Demo",
+            "--code",
+            "TOO-LONG",
+            "--description",
+            "x",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert_eq!(out.status.code(), Some(5));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("module_code_format"), "{err}");
+    assert!(err.contains("模块码必须是 2 至 6 位大写字母。"), "{err}");
+}

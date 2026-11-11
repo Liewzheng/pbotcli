@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 
 use pbotcli_html::strip_html_tags;
+use pbotcli_types::testcase::{TestCase, TestCaseIssueLink, TestCaseModule, TestCaseStep};
 use pbotcli_types::{Attachment, Comment, IntakeItem, WorkItem};
 use serde_json::{Value, json};
 
@@ -305,6 +306,69 @@ pub fn attachment_json(attachment: &Attachment) -> Value {
     })
 }
 
+/// JSON view of one row of the step table of a case.
+///
+/// The step number is assigned by the server, so it is part of the view
+/// (a caller writes the action and the expected result and reads back the
+/// number the server gave the row).
+pub fn test_case_step_view(step: &TestCaseStep) -> Value {
+    json!({
+        "id": step.id,
+        "sequence_id": step.sequence_id,
+        "action": step.action,
+        "expected_result": step.expected_result,
+    })
+}
+
+/// JSON view of one link between a case and a work item.
+pub fn test_case_issue_view(link: &TestCaseIssueLink) -> Value {
+    json!({
+        "id": link.id,
+        "issue_id": link.issue_id,
+        "issue_identifier": link.issue_identifier,
+        "issue_name": link.issue_name,
+    })
+}
+
+/// JSON view of a registered module code.
+pub fn test_case_module_view(module: &TestCaseModule) -> Value {
+    json!({
+        "id": module.id,
+        "code": module.code,
+        "description": module.description,
+        "created_at": module.created_at,
+        "updated_at": module.updated_at,
+    })
+}
+
+/// JSON view of a test case: the header fields, the step table and the
+/// work-item links.
+///
+/// The number is the name of the case and the server assigns it, so it is
+/// the first field of the view — a caller keys on it.
+pub fn test_case_view(case: &TestCase) -> Value {
+    json!({
+        "id": case.id,
+        "number": case.number,
+        "module": case.module,
+        "module_code": case.module_code,
+        "title": case.title,
+        "purpose": case.purpose,
+        "object_overview": case.object_overview,
+        "priority": case.priority,
+        "preconditions": case.preconditions,
+        "environment": case.environment,
+        "related_feature": case.related_feature,
+        "remarks": case.remarks,
+        "status": case.status,
+        "steps": case.steps.iter().map(test_case_step_view).collect::<Vec<_>>(),
+        "issue_links": case.issue_links.iter().map(test_case_issue_view).collect::<Vec<_>>(),
+        "created_at": case.created_at,
+        "updated_at": case.updated_at,
+        "created_by": case.created_by.as_ref().map(|user| user.label()).unwrap_or_default(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -487,5 +551,77 @@ mod tests {
         assert_eq!(summaries[0]["state_detail_name"], "In Progress");
         // No children → empty array, never null.
         assert!(sub_issue_summaries(&items, "nobody", "PLANECLI", &lookups).is_empty());
+    }
+
+    #[test]
+    fn the_case_view_carries_the_number_the_steps_and_the_links() {
+        let case = TestCase {
+            id: "tc1".into(),
+            number: "TC-PWR-001".into(),
+            module: "m1".into(),
+            module_code: "PWR".into(),
+            title: "Wake source".into(),
+            purpose: "Check the constraint".into(),
+            object_overview: "The config page".into(),
+            priority: "P1".into(),
+            preconditions: "Device flashed".into(),
+            environment: "RV1106 EVB".into(),
+            related_feature: "deep sleep".into(),
+            remarks: String::new(),
+            status: "active".into(),
+            steps: vec![TestCaseStep {
+                id: "s1".into(),
+                sequence_id: 1,
+                action: "Open the page".into(),
+                expected_result: "Only GPIO0".into(),
+                ..Default::default()
+            }],
+            issue_links: vec![TestCaseIssueLink {
+                id: "l1".into(),
+                issue_id: "wi1".into(),
+                issue_identifier: Some("DEMO-1".into()),
+                issue_name: Some("A task".into()),
+                ..Default::default()
+            }],
+            created_at: "2026-11-10T08:29:37Z".into(),
+            updated_at: "2026-11-10T08:29:37Z".into(),
+            created_by: Some(pbotcli_types::testcase::TestCaseUser {
+                id: "u1".into(),
+                display_name: Some("Jicai.Liu".into()),
+                ..Default::default()
+            }),
+        };
+        let view = test_case_view(&case);
+        assert_eq!(view["number"], "TC-PWR-001");
+        assert_eq!(view["module_code"], "PWR");
+        assert_eq!(view["steps"][0]["sequence_id"], 1);
+        assert_eq!(view["steps"][0]["expected_result"], "Only GPIO0");
+        assert_eq!(view["issue_links"][0]["issue_identifier"], "DEMO-1");
+        assert_eq!(view["created_by"], "Jicai.Liu");
+        assert_eq!(view["related_feature"], "deep sleep");
+    }
+
+    #[test]
+    fn the_case_view_of_a_bare_case_has_empty_lists() {
+        let view = test_case_view(&TestCase {
+            id: "tc1".into(),
+            ..Default::default()
+        });
+        assert_eq!(view["number"], "");
+        assert!(view["steps"].as_array().unwrap().is_empty());
+        assert!(view["issue_links"].as_array().unwrap().is_empty());
+        assert_eq!(view["created_by"], "");
+    }
+
+    #[test]
+    fn the_module_view_carries_the_code_and_the_description() {
+        let view = test_case_module_view(&TestCaseModule {
+            id: "m1".into(),
+            code: "CLI".into(),
+            description: "The command line of pbot".into(),
+            ..Default::default()
+        });
+        assert_eq!(view["code"], "CLI");
+        assert_eq!(view["description"], "The command line of pbot");
     }
 }

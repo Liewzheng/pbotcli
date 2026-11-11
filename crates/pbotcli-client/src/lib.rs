@@ -5,6 +5,10 @@
 //! Endpoints are prefixed with `/api/v1`; workspace-scoped resources take the
 //! workspace slug from the config. Authentication is the `X-Api-Key` header.
 
+pub mod asset;
+pub mod tcerror;
+pub mod testcase;
+
 use pbotcli_cache::Cache;
 use pbotcli_core::{Config, PlaneError};
 use pbotcli_types::{
@@ -14,6 +18,30 @@ use pbotcli_types::{
 };
 use serde::de::DeserializeOwned;
 use std::time::Duration;
+
+/// Maps an HTTP status and a response body onto the typed error of the
+/// workspace.
+///
+/// Every request carries the mapper of its feature, because the features
+/// disagree on what a refusal means: the generic surface reports a 403 as
+/// an API failure, while the test-case feature answers with the stable
+/// reason codes a caller can act on.
+pub(crate) type ErrorMapper = fn(u16, &str) -> PlaneError;
+
+/// The mapper of the generic surface: the status decides the variant and
+/// the body only adds the detail.
+pub(crate) fn api_error_mapper(status: u16, body: &str) -> PlaneError {
+    let status =
+        reqwest::StatusCode::from_u16(status).unwrap_or(reqwest::StatusCode::INTERNAL_SERVER_ERROR);
+    map_api_error(status, body)
+}
+
+/// The mapper of the test-case feature: the stable code of the refusal
+/// decides the variant, so a 409 of a known reason reads like the 400 of
+/// the same reason.
+pub(crate) fn testcase_error_mapper(status: u16, body: &str) -> PlaneError {
+    tcerror::map_testcase_error(status, body)
+}
 
 /// Cache TTLs, mirroring the Python CLI's per-resource TTLs.
 const TTL_MEMBERS: Duration = Duration::from_secs(300);
@@ -128,6 +156,20 @@ impl PlaneClient {
         query: &[(&str, String)],
         body: Option<&serde_json::Value>,
     ) -> Result<T, PlaneError> {
+        self.request_json_with(method, path, query, body, api_error_mapper)
+            .await
+    }
+
+    /// A request whose failures are mapped by `map_error` — the mapper of
+    /// the feature the endpoint belongs to.
+    async fn request_json_with<T: DeserializeOwned>(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        query: &[(&str, String)],
+        body: Option<&serde_json::Value>,
+        map_error: ErrorMapper,
+    ) -> Result<T, PlaneError> {
         let url = format!("{}{}", self.base_url, path);
         let mut attempts = 0;
         loop {
@@ -167,7 +209,7 @@ impl PlaneClient {
                 tokio::time::sleep(tokio::time::Duration::from_millis(200 * attempts as u64)).await;
                 continue;
             }
-            return Err(map_api_error(status, &text));
+            return Err(map_error(status.as_u16(), &text));
         }
     }
 
@@ -186,15 +228,27 @@ impl PlaneClient {
 
     /// Follow cursor pagination until exhausted, collecting all results.
     async fn paginate<T: DeserializeOwned>(&self, path: &str) -> Result<Vec<T>, PlaneError> {
+        self.paginate_with(path, api_error_mapper, &[]).await
+    }
+
+    /// Cursor pagination whose failures are mapped by `map_error` and whose
+    /// request carries `extra` (the filters of a list endpoint).
+    async fn paginate_with<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        map_error: ErrorMapper,
+        extra: &[(&str, String)],
+    ) -> Result<Vec<T>, PlaneError> {
         let mut all = Vec::new();
         let mut cursor: Option<String> = None;
         loop {
             let mut query: Vec<(&str, String)> = vec![("limit", "50".to_string())];
+            query.extend(extra.iter().map(|(k, v)| (*k, v.clone())));
             if let Some(c) = &cursor {
                 query.push(("cursor", c.clone()));
             }
             let page: PageEnvelope<T> = self
-                .request_json(reqwest::Method::GET, path, &query, None)
+                .request_json_with(reqwest::Method::GET, path, &query, None, map_error)
                 .await?;
             let had_more = page.next_page_results;
             all.extend(page.results);
@@ -884,11 +938,11 @@ impl PlaneClient {
     }
 
     /// `PATCH /api/v1/workspaces/{ws}/assets/{asset_id}/` with
-    /// `{"is_uploaded": true}` — mark a page asset uploaded (204).
+    /// `{"is_uploaded": true}` — mark a workspace asset uploaded (204).
     ///
     /// A 2xx is not proof the write landed (ADR-0007); callers read the asset
     /// back through [`get_workspace_asset`](Self::get_workspace_asset).
-    pub async fn confirm_page_asset(&self, asset_id: &str) -> Result<(), PlaneError> {
+    pub async fn confirm_asset(&self, asset_id: &str) -> Result<(), PlaneError> {
         let path = format!("/api/v1/workspaces/{}/assets/{}/", self.workspace, asset_id);
         let body = serde_json::json!({ "is_uploaded": true });
         let _: serde_json::Value = self
@@ -2060,7 +2114,7 @@ mod http_tests {
     }
 
     #[tokio::test]
-    async fn confirm_page_asset_patches_uploaded_true() {
+    async fn confirm_asset_patches_uploaded_true() {
         let mut server = mockito::Server::new_async().await;
         let m = server
             .mock("PATCH", "/api/v1/workspaces/ws/assets/a1/")
@@ -2071,7 +2125,7 @@ mod http_tests {
             .create_async()
             .await;
         let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
-        client.confirm_page_asset("a1").await.unwrap();
+        client.confirm_asset("a1").await.unwrap();
         m.assert_async().await;
     }
 }
