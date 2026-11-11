@@ -23,9 +23,9 @@ pub struct TestCaseModule {
     pub code: String,
     #[serde(default)]
     pub description: String,
-    #[serde(default, rename = "created_at")]
+    #[serde(default)]
     pub created_at: String,
-    #[serde(default, rename = "updated_at")]
+    #[serde(default)]
     pub updated_at: String,
 }
 
@@ -45,15 +45,15 @@ pub struct TestCaseModuleWrite {
 pub struct TestCaseStep {
     #[serde(default)]
     pub id: String,
-    #[serde(default, rename = "sequence_id")]
+    #[serde(default)]
     pub sequence_id: i64,
     #[serde(default)]
     pub action: String,
-    #[serde(default, rename = "expected_result")]
+    #[serde(default)]
     pub expected_result: String,
-    #[serde(default, rename = "created_at")]
+    #[serde(default)]
     pub created_at: String,
-    #[serde(default, rename = "updated_at")]
+    #[serde(default)]
     pub updated_at: String,
 }
 
@@ -61,7 +61,6 @@ pub struct TestCaseStep {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TestCaseStepWrite {
     pub action: String,
-    #[serde(rename = "expected_result")]
     pub expected_result: String,
 }
 
@@ -76,7 +75,7 @@ pub struct TestCaseStepsWrite {
 /// for the next write, otherwise it locks itself out with a stale version).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TestCaseStepsResult {
-    #[serde(default, rename = "updated_at")]
+    #[serde(default)]
     pub updated_at: String,
     #[serde(default)]
     pub steps: Vec<TestCaseStep>,
@@ -87,15 +86,15 @@ pub struct TestCaseStepsResult {
 pub struct TestCaseIssueLink {
     #[serde(default)]
     pub id: String,
-    #[serde(default, rename = "issue_id")]
+    #[serde(default)]
     pub issue_id: String,
     /// `<PROJECT>-<NNN>` of the linked work item; absent when the link points
     /// at no work item.
-    #[serde(default, rename = "issue_identifier")]
+    #[serde(default)]
     pub issue_identifier: Option<String>,
-    #[serde(default, rename = "issue_name")]
+    #[serde(default)]
     pub issue_name: Option<String>,
-    #[serde(default, rename = "created_at")]
+    #[serde(default)]
     pub created_at: String,
 }
 
@@ -118,13 +117,13 @@ pub struct TestCase {
     #[serde(default)]
     pub module: String,
     /// The code of that module — the prefix of the case number.
-    #[serde(default, rename = "module_code")]
+    #[serde(default)]
     pub module_code: String,
     #[serde(default)]
     pub title: String,
     #[serde(default)]
     pub purpose: String,
-    #[serde(default, rename = "object_overview")]
+    #[serde(default)]
     pub object_overview: String,
     #[serde(default)]
     pub priority: String,
@@ -132,7 +131,7 @@ pub struct TestCase {
     pub preconditions: String,
     #[serde(default)]
     pub environment: String,
-    #[serde(default, rename = "related_feature")]
+    #[serde(default)]
     pub related_feature: String,
     #[serde(default)]
     pub remarks: String,
@@ -141,35 +140,35 @@ pub struct TestCase {
     pub status: String,
     #[serde(default)]
     pub steps: Vec<TestCaseStep>,
-    #[serde(default, rename = "issue_links")]
+    #[serde(default)]
     pub issue_links: Vec<TestCaseIssueLink>,
-    #[serde(default, rename = "created_at")]
+    #[serde(default)]
     pub created_at: String,
-    #[serde(default, rename = "updated_at")]
+    #[serde(default)]
     pub updated_at: String,
     /// The creator, as the server hands it out: the same user payload the
     /// member list carries, so the name of a creator is read the same way as
     /// the name of an assignee.
-    #[serde(default, rename = "created_by")]
+    #[serde(default)]
     pub created_by: Option<Member>,
 }
 
 /// A test case as it is written.
 ///
 /// Every field is optional: the client strips the ones it does not set, so
-/// an unset field means "leave this alone" (ADR-0007). `module` and `title`
-/// are the fields the server refuses a case without.
+/// an unset field means "leave this alone" (ADR-0007). The server refuses
+/// a case without a module, a title, a purpose, an object overview, the
+/// preconditions, the environment, a valid priority and at least one step
+/// — so the CLI asks for all of them.
 #[derive(Debug, Clone, Serialize, Default)]
 pub struct TestCaseWrite {
     pub module: Option<String>,
     pub title: Option<String>,
     pub purpose: Option<String>,
-    #[serde(rename = "object_overview")]
     pub object_overview: Option<String>,
     pub priority: Option<String>,
     pub preconditions: Option<String>,
     pub environment: Option<String>,
-    #[serde(rename = "related_feature")]
     pub related_feature: Option<String>,
     pub remarks: Option<String>,
     pub status: Option<String>,

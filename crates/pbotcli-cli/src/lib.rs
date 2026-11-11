@@ -1,6 +1,7 @@
 //! pbotcli — command tree and handlers (Rust rewrite of the Python CLI).
 
 mod render;
+pub mod run;
 pub mod tc;
 
 /// `skill/SKILL.md` at the repo root, embedded into the binary at compile
@@ -128,10 +129,56 @@ pub enum Command {
     /// A case is named by its number (`TC-<module code>-<NNN>`), and the
     /// server assigns that number — the CLI never builds one. The module
     /// codes are registered first (`pbot tc module create`).
-    #[command(visible_alias = "test-case", visible_alias = "testcases")]
+    ///
+    /// Typical flow:
+    ///
+    ///   pbot tc module create -p PROJ --code CLI --description "The command line"
+    ///   pbot tc create -p PROJ --module CLI --title "Log in" --purpose "Check the login path" --object-overview "The login form" --priority P1 --precondition "The account exists" --environment "Windows 10" --step "Log in | The dashboard is shown"
+    ///   pbot tc issues TC-CLI-001 -p PROJ --add DEMO-42
+    ///
+    /// A case needs at least one step, and the server refuses a case
+    /// without a title, a purpose, an object overview, the
+    /// preconditions, the environment and a priority.
+    #[command(
+        visible_alias = "test-case",
+        visible_alias = "testcases",
+        verbatim_doc_comment
+    )]
     Tc {
         #[command(subcommand)]
         command: tc::TcCmd,
+    },
+    /// Manage the test runs (batches) of a project.
+    ///
+    /// A batch is one continuous execution of test cases. Its number
+    /// (RUN-YYYYMMDD-NN) is assigned by the server — the CLI never
+    /// builds one.
+    ///
+    /// Typical flow:
+    ///
+    ///   pbot run create -p PROJ --version 1.2.3 --build 42 --commit abc1234 --env bench
+    ///   pbot run add RUN-20261109-01 TC-CLI-007 TC-CLI-008
+    ///   pbot run step RUN-20261109-01 --case TC-CLI-007 --step 3 --verdict fail --actual-file notes.md
+    ///   pbot run conclude RUN-20261109-01 --case TC-CLI-007 --conclusion FAIL --evidence-file notes.md
+    ///   pbot run finalize RUN-20261109-01
+    ///
+    /// The verdict of a step and the conclusion of a case are written
+    /// once: both commands ask before they write (a terminal asks, a
+    /// script passes --yes), and no flag overwrites a verdict that is
+    /// already recorded. A completed batch is frozen: every write to it
+    /// is refused, and the CLI never retries such a refusal on its own.
+    ///
+    /// The finalize refuses a batch whose cases carry no evidence: the
+    /// evidence hangs on the case (--evidence/--evidence-file, or
+    /// --image), and a screenshot of a step does not count.
+    #[command(
+        visible_alias = "test-run",
+        visible_alias = "test-runs",
+        verbatim_doc_comment
+    )]
+    Run {
+        #[command(subcommand)]
+        command: run::RunCmd,
     },
     /// Manage documents (pages).
     ///
@@ -1601,6 +1648,7 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
             }
         },
         Command::Tc { command } => tc::dispatch(&client, command, cli.json).await,
+        Command::Run { command } => run::dispatch(&client, command, cli.json).await,
         Command::Cache { command } => match command {
             CacheCmd::Clear => {
                 Cache::new().clear();

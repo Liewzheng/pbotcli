@@ -8,6 +8,7 @@
 //! state/label/member maps.
 
 pub mod testcase;
+pub mod testrun;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
