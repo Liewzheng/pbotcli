@@ -208,6 +208,23 @@ pub struct TestCaseWrite {
     pub steps: Option<Vec<TestCaseStepWrite>>,
 }
 
+impl TestCaseWrite {
+    /// True when the body carries no field at all — a write of nothing.
+    pub fn is_empty(&self) -> bool {
+        self.module.is_none()
+            && self.title.is_none()
+            && self.purpose.is_none()
+            && self.object_overview.is_none()
+            && self.priority.is_none()
+            && self.preconditions.is_none()
+            && self.environment.is_none()
+            && self.related_feature.is_none()
+            && self.remarks.is_none()
+            && self.status.is_none()
+            && self.steps.is_none()
+    }
+}
+
 /// The filters the list endpoint of the cases understands.
 #[derive(Debug, Clone, Default)]
 pub struct TestCaseFilters {
@@ -285,6 +302,25 @@ mod tests {
         // before the body leaves, so the server reads it as "leave this
         // alone" (ADR-0007).
         assert!(value["purpose"].is_null());
+    }
+
+    #[test]
+    fn a_write_without_a_field_is_empty() {
+        assert!(TestCaseWrite::default().is_empty());
+        assert!(
+            !TestCaseWrite {
+                title: Some("A title".into()),
+                ..Default::default()
+            }
+            .is_empty()
+        );
+        assert!(
+            !TestCaseWrite {
+                steps: Some(Vec::new()),
+                ..Default::default()
+            }
+            .is_empty()
+        );
     }
 
     #[test]

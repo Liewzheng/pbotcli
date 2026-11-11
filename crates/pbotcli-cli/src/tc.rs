@@ -769,9 +769,18 @@ async fn cmd_tc_update(
     json: bool,
 ) -> Result<(), PlaneError> {
     let steps = collect_steps(opts.step, opts.steps_file)?;
+    let write = case_write(opts, steps);
+    // An update without a field would be a write of nothing: the server
+    // would answer 200 and the record would stay as it is. The refusal
+    // happens before any request.
+    if write.is_empty() {
+        return Err(PlaneError::validation_with_hint(
+            "Nothing to update.",
+            "Pass at least one field, for example --title or --step.",
+        ));
+    }
     let project = require_project(client, project).await?;
     let found = resolve_test_case(client, &project.id, case).await?;
-    let write = case_write(opts, steps);
     let updated = client
         .update_test_case(&project.id, &found.id, &write)
         .await?;
