@@ -1078,3 +1078,137 @@ fn a_value_and_a_file_are_not_mixed() {
     assert!(stderr_of(&out).contains("--actual"));
     step.assert();
 }
+
+#[test]
+fn the_whole_flow_of_a_batch_runs_from_the_create_to_the_summary() {
+    let mut server = Server::new();
+    mock_run_reads(&mut server);
+    mock_run_cases(&mut server, "[]");
+    server
+        .mock("POST", "/api/v1/workspaces/ws/projects/p1/test-runs/")
+        .with_status(201)
+        .with_header("content-type", "application/json")
+        .with_body(RUN)
+        .create();
+    server
+        .mock(
+            "POST",
+            "/api/v1/workspaces/ws/projects/p1/test-runs/r1/cases/",
+        )
+        .with_status(201)
+        .with_header("content-type", "application/json")
+        .with_body(RUN_CASES)
+        .create();
+    server
+        .mock(
+            "PATCH",
+            "/api/v1/workspaces/ws/projects/p1/test-runs/r1/cases/rc1/steps/3/",
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"id":"s1","sequence_id":3,"conclusion":"fail","actual_value":"the password was refused"}"#)
+        .create();
+    server
+        .mock(
+            "PATCH",
+            "/api/v1/workspaces/ws/projects/p1/test-runs/r1/cases/rc1/",
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(r#"{"id":"rc1","case_number":"TC-CLI-007","conclusion":"FAIL","evidence":"see the report"}"#)
+        .create();
+    server
+        .mock(
+            "POST",
+            "/api/v1/workspaces/ws/projects/p1/test-runs/r1/finalize/",
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(RUN.replace("\"status\":\"in_progress\"", "\"status\":\"completed\""))
+        .create();
+    server
+        .mock(
+            "GET",
+            "/api/v1/workspaces/ws/projects/p1/test-runs/r1/summary/",
+        )
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"total":1,"pass":0,"fail":1,"na":0,"manual":1,"deviations":[{"case_number":"TC-CLI-007","summary":"the password was refused"}]}"#,
+        )
+        .create();
+
+    let steps: Vec<Vec<&str>> = vec![
+        vec![
+            "run",
+            "create",
+            "-p",
+            "Demo",
+            "--version",
+            "1.2.3",
+            "--build",
+            "42",
+            "--commit",
+            "abc1234",
+            "--env",
+            "bench",
+            "--run-date",
+            "2026-11-09",
+        ],
+        vec!["run", "add", "RUN-20261109-01", "TC-CLI-007", "-p", "Demo"],
+        vec![
+            "run",
+            "step",
+            "RUN-20261109-01",
+            "--case",
+            "TC-CLI-007",
+            "--step",
+            "3",
+            "--verdict",
+            "fail",
+            "--actual",
+            "the password was refused",
+            "--yes",
+            "-p",
+            "Demo",
+        ],
+        vec![
+            "run",
+            "conclude",
+            "RUN-20261109-01",
+            "--case",
+            "TC-CLI-007",
+            "--conclusion",
+            "FAIL",
+            "--evidence",
+            "see the report",
+            "--yes",
+            "-p",
+            "Demo",
+        ],
+        vec!["run", "finalize", "RUN-20261109-01", "-p", "Demo"],
+        vec!["run", "summary", "RUN-20261109-01", "-p", "Demo", "--json"],
+    ];
+    for step in steps {
+        let mut args = step.clone();
+        args.push("--no-cache");
+        let out = run(&args, &server.url());
+        assert!(out.status.success(), "{args:?} failed: {}", stderr_of(&out));
+    }
+    // The summary of the closed batch is the last word of the flow.
+    let out = run(
+        &[
+            "run",
+            "summary",
+            "RUN-20261109-01",
+            "-p",
+            "Demo",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout_of(&out)).expect("valid JSON");
+    assert_eq!(parsed["total"], 1);
+    assert_eq!(parsed["fail"], 1);
+}

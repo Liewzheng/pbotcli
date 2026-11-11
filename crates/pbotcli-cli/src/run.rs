@@ -371,7 +371,7 @@ pub async fn dispatch(client: &PlaneClient, command: RunCmd, json: bool) -> Resu
             cmd_run_remove(client, &run, &case, project.as_deref(), json).await
         }
         RunCmd::Finalize { run, project } => {
-            cmd_run_finalize(client, &run, project.as_deref()).await
+            cmd_run_finalize(client, &run, project.as_deref(), json).await
         }
         RunCmd::Summary { run, project } => {
             cmd_run_summary(client, &run, project.as_deref(), json).await
@@ -1197,6 +1197,7 @@ async fn cmd_run_finalize(
     client: &PlaneClient,
     run: &str,
     project: Option<&str>,
+    json: bool,
 ) -> Result<(), PlaneError> {
     let project = require_project(client, project).await?;
     let found = resolve_test_run(client, &project.id, run).await?;
@@ -1213,7 +1214,11 @@ async fn cmd_run_finalize(
         ));
     }
     let closed = client.finalize_test_run(&project.id, &found.id).await?;
-    eprintln!("Finalized {}.", closed.number);
+    if json {
+        output_json(&test_run_view(&closed));
+    } else {
+        eprintln!("Finalized {}.", closed.number);
+    }
     Ok(())
 }
 
