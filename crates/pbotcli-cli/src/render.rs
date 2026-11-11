@@ -365,7 +365,11 @@ pub fn test_case_view(case: &TestCase) -> Value {
         "issue_links": case.issue_links.iter().map(test_case_issue_view).collect::<Vec<_>>(),
         "created_at": case.created_at,
         "updated_at": case.updated_at,
-        "created_by": case.created_by.as_ref().map(|user| user.label()).unwrap_or_default(),
+        "created_by": case
+            .created_by
+            .as_ref()
+            .map(|user| user.full_name())
+            .unwrap_or_default(),
     })
 }
 
@@ -585,9 +589,11 @@ mod tests {
             }],
             created_at: "2026-11-10T08:29:37Z".into(),
             updated_at: "2026-11-10T08:29:37Z".into(),
-            created_by: Some(pbotcli_types::testcase::TestCaseUser {
+            created_by: Some(pbotcli_types::Member {
                 id: "u1".into(),
                 display_name: Some("Jicai.Liu".into()),
+                first_name: Some("Jicai".into()),
+                last_name: Some("Liu".into()),
                 ..Default::default()
             }),
         };
@@ -597,7 +603,7 @@ mod tests {
         assert_eq!(view["steps"][0]["sequence_id"], 1);
         assert_eq!(view["steps"][0]["expected_result"], "Only GPIO0");
         assert_eq!(view["issue_links"][0]["issue_identifier"], "DEMO-1");
-        assert_eq!(view["created_by"], "Jicai.Liu");
+        assert_eq!(view["created_by"], "Jicai Liu");
         assert_eq!(view["related_feature"], "deep sleep");
     }
 

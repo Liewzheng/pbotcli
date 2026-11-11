@@ -2953,9 +2953,9 @@ fn wi_show_without_project_reports_when_every_project_was_skipped() {
 // ---------------------------------------------------------------------------
 
 const TC_MODULES: &str = r#"[{"id":"m1","code":"CLI","description":"The command line of pbot","created_at":"2026-11-10T08:26:36Z","updated_at":"2026-11-10T08:26:36Z"}]"#;
-const TC_CASES: &str = r#"{"results":[{"id":"tc1","number":"TC-CLI-001","module":"m1","module_code":"CLI","title":"Log in with a valid account","purpose":"Make sure the login path works","object_overview":"The login form","priority":"P1","preconditions":"The account exists","environment":"Windows 10","related_feature":"","remarks":"","status":"active","steps":[{"id":"s1","sequence_id":1,"action":"Start pbot","expected_result":"The login form is shown"}],"issue_links":[],"created_at":"2026-11-10T08:29:37Z","updated_at":"2026-11-10T08:29:37Z","created_by":{"id":"u1","display_name":"Jicai.Liu"}}],"next_cursor":null,"next_page_results":false}"#;
-const TC_CASE: &str = r#"{"id":"tc1","number":"TC-CLI-001","module":"m1","module_code":"CLI","title":"Log in with a valid account","purpose":"Make sure the login path works","object_overview":"The login form","priority":"P1","preconditions":"The account exists","environment":"Windows 10","related_feature":"","remarks":"","status":"active","steps":[{"id":"s1","sequence_id":1,"action":"Start pbot","expected_result":"The login form is shown"}],"issue_links":[],"created_at":"2026-11-10T08:29:37Z","updated_at":"2026-11-10T08:29:37Z","created_by":{"id":"u1","display_name":"Jicai.Liu"}}"#;
-const TC_CASES_WITH_LINK: &str = r#"{"results":[{"id":"tc1","number":"TC-CLI-001","module":"m1","module_code":"CLI","title":"Log in with a valid account","purpose":"Make sure the login path works","object_overview":"The login form","priority":"P1","preconditions":"The account exists","environment":"Windows 10","related_feature":"","remarks":"","status":"active","steps":[{"id":"s1","sequence_id":1,"action":"Start pbot","expected_result":"The login form is shown"}],"issue_links":[{"id":"l1","issue_id":"wi1","issue_identifier":"DEMO-1","issue_name":"A task","created_at":"2026-11-10T08:29:37Z"}],"created_at":"2026-11-10T08:29:37Z","updated_at":"2026-11-10T08:29:37Z","created_by":{"id":"u1","display_name":"Jicai.Liu"}}],"next_cursor":null,"next_page_results":false}"#;
+const TC_CASES: &str = r#"{"results":[{"id":"tc1","number":"TC-CLI-001","module":"m1","module_code":"CLI","title":"Log in with a valid account","purpose":"Make sure the login path works","object_overview":"The login form","priority":"P1","preconditions":"The account exists","environment":"Windows 10","related_feature":"","remarks":"","status":"active","steps":[{"id":"s1","sequence_id":1,"action":"Start pbot","expected_result":"The login form is shown"}],"issue_links":[],"created_at":"2026-11-10T08:29:37Z","updated_at":"2026-11-10T08:29:37Z","created_by":{"id":"u1","display_name":"Jicai.Liu","first_name":"Jicai","last_name":"Liu"}}],"next_cursor":null,"next_page_results":false}"#;
+const TC_CASE: &str = r#"{"id":"tc1","number":"TC-CLI-001","module":"m1","module_code":"CLI","title":"Log in with a valid account","purpose":"Make sure the login path works","object_overview":"The login form","priority":"P1","preconditions":"The account exists","environment":"Windows 10","related_feature":"","remarks":"","status":"active","steps":[{"id":"s1","sequence_id":1,"action":"Start pbot","expected_result":"The login form is shown"}],"issue_links":[],"created_at":"2026-11-10T08:29:37Z","updated_at":"2026-11-10T08:29:37Z","created_by":{"id":"u1","display_name":"Jicai.Liu","first_name":"Jicai","last_name":"Liu"}}"#;
+const TC_CASES_WITH_LINK: &str = r#"{"results":[{"id":"tc1","number":"TC-CLI-001","module":"m1","module_code":"CLI","title":"Log in with a valid account","purpose":"Make sure the login path works","object_overview":"The login form","priority":"P1","preconditions":"The account exists","environment":"Windows 10","related_feature":"","remarks":"","status":"active","steps":[{"id":"s1","sequence_id":1,"action":"Start pbot","expected_result":"The login form is shown"}],"issue_links":[{"id":"l1","issue_id":"wi1","issue_identifier":"DEMO-1","issue_name":"A task","created_at":"2026-11-10T08:29:37Z"}],"created_at":"2026-11-10T08:29:37Z","updated_at":"2026-11-10T08:29:37Z","created_by":{"id":"u1","display_name":"Jicai.Liu","first_name":"Jicai","last_name":"Liu"}}],"next_cursor":null,"next_page_results":false}"#;
 const TC_STEPS: &str = r#"[{"id":"s1","sequence_id":1,"action":"Start pbot","expected_result":"The login form is shown"}]"#;
 const TC_ISSUES: &str = r#"[{"id":"l1","issue_id":"wi1","issue_identifier":"DEMO-1","issue_name":"A task","created_at":"2026-11-10T08:29:37Z"}]"#;
 
@@ -3006,7 +3006,7 @@ fn tc_ls_json_contract() {
         "The login form is shown"
     );
     assert_eq!(row["issue_links"].as_array().unwrap().len(), 0);
-    assert_eq!(row["created_by"], "Jicai.Liu");
+    assert_eq!(row["created_by"], "Jicai Liu");
     // The table goes to stderr, the JSON to stdout.
     assert!(String::from_utf8_lossy(&out.stderr).is_empty());
 }
@@ -3430,7 +3430,7 @@ fn tc_update_writes_only_the_fields_that_were_given() {
 fn tc_update_refuses_to_change_the_module_or_the_number() {
     // No endpoint is mocked: the refusal happens before any request, so a
     // request would answer 501 and change the exit code of the command.
-    let mut server = Server::new();
+    let server = Server::new();
 
     for (flag, value, expected) in [
         ("--module", "CLI", "module of a test case cannot be changed"),
@@ -3495,6 +3495,13 @@ fn tc_steps_reads_the_step_table() {
 fn tc_steps_replaces_the_whole_table() {
     let mut server = Server::new();
     mock_tc_reads(&mut server);
+    // The table is read before it is replaced, so the command can say how
+    // many rows the replacement drops.
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/test-cases/tc1/steps/",
+        TC_STEPS,
+    );
     let m = server
         .mock("PUT", "/api/v1/workspaces/ws/projects/p1/test-cases/tc1/steps/")
         .match_body(Matcher::Json(serde_json::json!({
@@ -3787,7 +3794,7 @@ fn tc_module_create_reports_the_code_of_a_refused_module_code() {
 fn tc_update_without_a_field_is_refused_before_any_request() {
     // No endpoint is mocked: a request would answer 501 and change the exit
     // code of the command.
-    let mut server = Server::new();
+    let server = Server::new();
 
     let out = run(
         &["tc", "update", "TC-CLI-001", "-p", "Demo", "--no-cache"],
@@ -3796,4 +3803,191 @@ fn tc_update_without_a_field_is_refused_before_any_request() {
     assert_eq!(out.status.code(), Some(5));
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(err.contains("Nothing to update."), "{err}");
+}
+
+#[test]
+fn tc_steps_refuses_an_empty_table() {
+    let mut server = Server::new();
+    mock_tc_reads(&mut server);
+
+    let out = run(
+        &[
+            "tc",
+            "steps",
+            "TC-CLI-001",
+            "-p",
+            "Demo",
+            "--steps-file",
+            "/dev/null",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert_eq!(out.status.code(), Some(5));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("at least one step"), "{err}");
+}
+
+#[test]
+fn tc_steps_says_how_many_rows_the_replacement_drops() {
+    let mut server = Server::new();
+    mock_tc_reads(&mut server);
+    mock_list(
+        &mut server,
+        "/api/v1/workspaces/ws/projects/p1/test-cases/tc1/steps/",
+        TC_STEPS,
+    );
+    server
+        .mock("PUT", "/api/v1/workspaces/ws/projects/p1/test-cases/tc1/steps/")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"updated_at":"2026-11-11T00:00:00Z","steps":[{"id":"s1","sequence_id":1,"action":"Start pbot","expected_result":"The login form is shown"}]}"#,
+        )
+        .create();
+
+    // The table of the case holds one step and the replacement holds one
+    // too, so nothing is said.
+    let out = run(
+        &[
+            "tc",
+            "steps",
+            "TC-CLI-001",
+            "-p",
+            "Demo",
+            "--step",
+            "Start pbot | The login form is shown",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!String::from_utf8_lossy(&out.stderr).contains("Replacing"));
+
+    // A table of two steps against a table of one says what it replaces.
+    let out = run(
+        &[
+            "tc",
+            "steps",
+            "TC-CLI-001",
+            "-p",
+            "Demo",
+            "--step",
+            "Start pbot | The login form is shown",
+            "--step",
+            "Log in | The dashboard is shown",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("Replacing the 1 step(s) of TC-CLI-001 with 2 step(s)."),
+        "{err}"
+    );
+}
+
+#[test]
+fn tc_show_finds_a_voided_case_by_its_number() {
+    // A voided case keeps its number, so the lookup has to ask for the
+    // voided cases as well.
+    let mut server = Server::new();
+    mock_list(&mut server, "/api/v1/workspaces/ws/projects/", PROJECTS);
+    let m = server
+        .mock("GET", "/api/v1/workspaces/ws/projects/p1/test-cases/")
+        .match_query(Matcher::UrlEncoded("status".to_string(), "all".to_string()))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"results":[{"id":"tc1","number":"TC-CLI-001","module":"m1","module_code":"CLI","title":"A voided case","purpose":"p","object_overview":"o","priority":"P1","preconditions":"c","environment":"e","related_feature":"","remarks":"","status":"void","steps":[],"issue_links":[],"created_at":"2026-11-10T08:29:37Z","updated_at":"2026-11-10T08:29:37Z"}],"next_cursor":null,"next_page_results":false}"#,
+        )
+        .create();
+
+    let out = run(
+        &[
+            "tc",
+            "show",
+            "TC-CLI-001",
+            "-p",
+            "Demo",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout_of(&out)).expect("valid JSON");
+    assert_eq!(parsed["status"], "void");
+    m.assert();
+}
+
+#[test]
+fn tc_create_refuses_a_module_code_that_is_not_registered() {
+    let mut server = Server::new();
+    mock_tc_reads(&mut server);
+
+    let out = run(
+        &[
+            "tc",
+            "create",
+            "-p",
+            "Demo",
+            "--module",
+            "NOPE",
+            "--title",
+            "A case",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert_eq!(out.status.code(), Some(3));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("Test case module not found: NOPE"), "{err}");
+    assert!(err.contains("pbot tc module ls"), "{err}");
+}
+
+#[test]
+fn tc_issues_reports_the_link_that_is_already_there() {
+    let mut server = Server::new();
+    mock_tc_reads(&mut server);
+    server
+        .mock("POST", "/api/v1/workspaces/ws/projects/p1/test-cases/tc1/issues/")
+        .with_status(400)
+        .with_header("content-type", "application/json")
+        .with_body(
+            r#"{"error":"The work item is already linked to this test case.","code":"issue_link_exists","errors":[
+                {"code":"issue_link_exists","message":"该工作项已经关联到这个用例。","path":"issue_id","field":"issue_id"}]}"#,
+        )
+        .create();
+
+    let out = run(
+        &[
+            "tc",
+            "issues",
+            "TC-CLI-001",
+            "-p",
+            "Demo",
+            "--add",
+            "DEMO-1",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert_eq!(out.status.code(), Some(5));
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("issue_link_exists"), "{err}");
+    assert!(err.contains("该工作项已经关联到这个用例。"), "{err}");
 }

@@ -162,16 +162,19 @@ pub fn parse_error_envelope(body: &str) -> Option<ErrorEnvelope> {
 /// sentence and is echoed verbatim — the caller cannot guess the remedy
 /// and must not paraphrase it.
 fn server_text(body: &str, envelope: Option<&ErrorEnvelope>) -> String {
-    if let Some(envelope) = envelope
-        && let Some(error) = envelope.error.as_deref().filter(|e| !e.is_empty())
-    {
-        return error.to_string();
-    }
+    // The `detail` of a DRF body carries the remedy of the server ("Manage
+    // scopes.", "a workspace admin must add …") in the same sentence, so it
+    // wins over the one-line summary of the envelope.
     if let Ok(value) = serde_json::from_str::<Value>(body)
         && let Some(detail) = value.get("detail").and_then(Value::as_str)
         && !detail.trim().is_empty()
     {
         return detail.trim().to_string();
+    }
+    if let Some(envelope) = envelope
+        && let Some(error) = envelope.error.as_deref().filter(|e| !e.is_empty())
+    {
+        return error.to_string();
     }
     crate::snippet_or_redact(body.trim())
 }
@@ -242,7 +245,7 @@ fn hint_for(envelope: &ErrorEnvelope) -> String {
 ///   problem. The `detail` of a 403 carries the server's remedy and is
 ///   echoed verbatim.
 /// * `404` → `NotFound` (exit 3).
-/// * `400` / `409` / `422` **with** a stable code → `Validation` (exit 5):
+/// * `400` / `409` **with** a stable code → `Validation` (exit 5):
 ///   the server read the request and refused it for a reason the caller
 ///   can act on. A `409` and a `400` of the same code are the same class
 ///   of failure, so a duplicate that arrives as `409` reads like the
@@ -270,7 +273,7 @@ pub fn map_testcase_error(status: u16, body: &str) -> PlaneError {
             ),
             hint: None,
         },
-        400 | 409 | 422 => match envelope.as_ref().filter(|e| e.has_code()) {
+        400 | 409 => match envelope.as_ref().filter(|e| e.has_code()) {
             Some(envelope) => PlaneError::Validation {
                 message: format_envelope(envelope, status),
                 hint: Some(hint_for(envelope)),

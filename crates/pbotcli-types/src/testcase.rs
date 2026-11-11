@@ -9,6 +9,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::Member;
+
 /// A registered module code of a project.
 ///
 /// The module code is what a case number is built from: the server assigns
@@ -103,42 +105,6 @@ pub struct TestCaseIssueWrite {
     pub issue_id: String,
 }
 
-/// The creator of a case, as the server hands it out: a nested user object
-/// (a human or the shadow bot of a service principal).
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct TestCaseUser {
-    #[serde(default)]
-    pub id: String,
-    #[serde(default, rename = "display_name")]
-    pub display_name: Option<String>,
-    #[serde(default, rename = "first_name")]
-    pub first_name: Option<String>,
-    #[serde(default, rename = "last_name")]
-    pub last_name: Option<String>,
-}
-
-impl TestCaseUser {
-    /// The name of the creator: the display name when there is one, else the
-    /// joined person fields.
-    pub fn label(&self) -> String {
-        if let Some(name) = self
-            .display_name
-            .as_deref()
-            .map(str::trim)
-            .filter(|n| !n.is_empty())
-        {
-            return name.to_string();
-        }
-        [self.first_name.as_deref(), self.last_name.as_deref()]
-            .into_iter()
-            .flatten()
-            .map(str::trim)
-            .filter(|part| !part.is_empty())
-            .collect::<Vec<_>>()
-            .join(" ")
-    }
-}
-
 /// A test case as it is read.
 ///
 /// The number (`TC-<module code>-<NNN>`) is assigned by the server and is
@@ -181,8 +147,11 @@ pub struct TestCase {
     pub created_at: String,
     #[serde(default, rename = "updated_at")]
     pub updated_at: String,
+    /// The creator, as the server hands it out: the same user payload the
+    /// member list carries, so the name of a creator is read the same way as
+    /// the name of an assignee.
     #[serde(default, rename = "created_by")]
-    pub created_by: Option<TestCaseUser>,
+    pub created_by: Option<Member>,
 }
 
 /// A test case as it is written.
@@ -275,7 +244,7 @@ mod tests {
             case.issue_links[0].issue_identifier.as_deref(),
             Some("DEMO-1")
         );
-        assert_eq!(case.created_by.unwrap().label(), "Jicai.Liu");
+        assert_eq!(case.created_by.unwrap().full_name(), "Jicai Liu");
     }
 
     #[test]
@@ -335,17 +304,13 @@ mod tests {
     }
 
     #[test]
-    fn the_creator_falls_back_to_the_person_fields() {
-        let user = TestCaseUser {
-            first_name: Some("Jicai".into()),
-            last_name: Some("Liu".into()),
-            ..Default::default()
-        };
-        assert_eq!(user.label(), "Jicai Liu");
-        let blank = TestCaseUser {
-            display_name: Some("   ".into()),
-            ..Default::default()
-        };
-        assert_eq!(blank.label(), "");
+    fn the_creator_is_read_as_a_member() {
+        // The creator is the same payload the member list carries, so its
+        // name is read the same way as the name of an assignee.
+        let case: TestCase = serde_json::from_str(
+            r#"{"id":"tc1","created_by":{"id":"u1","display_name":"Jicai.Liu","first_name":"Jicai","last_name":"Liu"}}"#,
+        )
+        .unwrap();
+        assert_eq!(case.created_by.unwrap().full_name(), "Jicai Liu");
     }
 }

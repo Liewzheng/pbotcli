@@ -22,8 +22,8 @@ use pbotcli_resolve::testcase::{resolve_test_case, resolve_test_case_module};
 use pbotcli_resolve::{locate_work_item_in_project, resolve_project};
 use pbotcli_types::Project;
 use pbotcli_types::testcase::{
-    TestCase, TestCaseFilters, TestCaseModuleWrite, TestCaseStep, TestCaseStepWrite,
-    TestCaseStepsWrite, TestCaseWrite,
+    TestCase, TestCaseFilters, TestCaseModuleWrite, TestCaseStepWrite, TestCaseStepsWrite,
+    TestCaseWrite,
 };
 use serde_json::Value;
 
@@ -168,10 +168,13 @@ pub enum TcCmd {
         /// "action | expected result" per line).
         #[arg(long, value_name = "PATH")]
         steps_file: Option<PathBuf>,
-        /// Refused: the module of a case cannot be changed.
+        /// Refused: the module of a case cannot be changed (the number is
+        /// bound to it). The flag exists so the refusal names the field the
+        /// caller tried to change.
         #[arg(long)]
         module: Option<String>,
-        /// Refused: the number of a case is assigned by the server.
+        /// Refused: the number of a case is assigned by the server and is
+        /// part of the record of every run.
         #[arg(long)]
         number: Option<String>,
     },
@@ -708,7 +711,7 @@ async fn cmd_tc_show(
             found
                 .created_by
                 .as_ref()
-                .map(|user| user.label())
+                .map(|user| user.full_name())
                 .unwrap_or_default(),
         ],
     ];
@@ -830,6 +833,24 @@ async fn cmd_tc_steps(
         return Ok(());
     };
     // A step was given: the whole table is replaced.
+    if steps.is_empty() {
+        return Err(PlaneError::validation_with_hint(
+            "A step table needs at least one step.",
+            "Pass --step \"action | expected result\" (or a --steps-file that holds one).",
+        ));
+    }
+    // The table is replaced as a whole, so a shorter table drops rows. The
+    // replacement is documented, not prompted (ADR-0008) — but it is never
+    // silent: the row count of the table is said out loud before the write.
+    let current = client.list_test_case_steps(&project.id, &found.id).await?;
+    if current.len() != steps.len() {
+        eprintln!(
+            "Replacing the {} step(s) of {} with {} step(s).",
+            current.len(),
+            found.number,
+            steps.len()
+        );
+    }
     let body = TestCaseStepsWrite { steps };
     let result = client
         .replace_test_case_steps(&project.id, &found.id, &body)
@@ -888,11 +909,12 @@ async fn cmd_tc_issues(
         if json {
             output_json(&serde_json::json!({
                 "number": found.number,
+                "issue": query,
                 "issue_id": issue_id,
                 "removed": true,
             }));
         } else {
-            eprintln!("Unlinked {issue_id} from {}.", found.number);
+            eprintln!("Unlinked {query} from {}.", found.number);
         }
         return Ok(());
     }
@@ -979,21 +1001,6 @@ async fn cmd_tc_module_create(
         eprintln!("Registered module code {}.", created.code);
     }
     Ok(())
-}
-
-/// The step table of a case, as the read command answers it.
-#[allow(dead_code)]
-fn step_rows(steps: &[TestCaseStep]) -> Vec<Vec<String>> {
-    steps
-        .iter()
-        .map(|step| {
-            vec![
-                step.sequence_id.to_string(),
-                step.action.clone(),
-                step.expected_result.clone(),
-            ]
-        })
-        .collect()
 }
 
 #[cfg(test)]

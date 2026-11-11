@@ -33,6 +33,17 @@ fn modules_key(workspace: &str, project_id: &str) -> String {
     format!("test_case_modules:{workspace}:{project_id}")
 }
 
+/// Cache key prefix of the list of the cases of a project.
+///
+/// A write invalidates this prefix, and the key of a filtered list starts
+/// with it — so a write clears the filtered lists as well. The cache drops
+/// every entry whose key starts with the prefix, and its sanitizer maps
+/// every character on its own, so a prefix of the raw keys is a prefix of
+/// the sanitized ones.
+fn cases_prefix(workspace: &str, project_id: &str) -> String {
+    format!("test_cases:{workspace}:{project_id}")
+}
+
 /// Cache key of the list of the cases of a project.
 ///
 /// The filters are part of the key: a filtered read must not be served to
@@ -40,7 +51,8 @@ fn modules_key(workspace: &str, project_id: &str) -> String {
 /// so two different filter sets never share a key.
 fn cases_key(workspace: &str, project_id: &str, filters: &TestCaseFilters) -> String {
     format!(
-        "test_cases:{workspace}:{project_id}:{}",
+        "{}:{}",
+        cases_prefix(workspace, project_id),
         filter_signature(filters)
     )
 }
@@ -378,7 +390,7 @@ impl PlaneClient {
     /// The step table and the work-item links are part of the case, so a
     /// write to any of them makes the list of the cases stale as well.
     fn invalidate_test_case(&self, project_id: &str, case_id: Option<&str>) {
-        self.invalidate(&format!("test_cases:{}:{}", self.workspace, project_id));
+        self.invalidate(&cases_prefix(&self.workspace, project_id));
         if let Some(case_id) = case_id {
             self.invalidate(&steps_key(&self.workspace, project_id, case_id));
             self.invalidate(&issues_key(&self.workspace, project_id, case_id));
@@ -569,6 +581,24 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.exit_code(), pbotcli_core::errors::EXIT_AUTH);
         assert!(err.to_string().contains("Manage scopes."));
+    }
+
+    #[test]
+    fn the_prefix_a_write_invalidates_covers_the_filtered_lists() {
+        let filters = TestCaseFilters {
+            module: Some("CLI".into()),
+            priority: Some("P1".into()),
+            ..Default::default()
+        };
+        let key = cases_key("ws", "p1", &filters);
+        assert!(
+            key.starts_with(&cases_prefix("ws", "p1")),
+            "a write invalidates the prefix, so it has to clear the filtered lists: {key}"
+        );
+        // The prefix of one resource does not swallow the prefix of another.
+        assert!(!modules_key("ws", "p1").starts_with(&cases_prefix("ws", "p1")));
+        assert!(!steps_key("ws", "p1", "tc1").starts_with(&cases_prefix("ws", "p1")));
+        assert!(!issues_key("ws", "p1", "tc1").starts_with(&cases_prefix("ws", "p1")));
     }
 
     #[test]

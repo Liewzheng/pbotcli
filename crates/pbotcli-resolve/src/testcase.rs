@@ -50,16 +50,30 @@ pub async fn resolve_test_case(
             });
     }
 
-    let cases = all_cases(client, project_id).await?;
     let wanted = query.trim();
-    if let Some(case) = cases
-        .iter()
-        .find(|case| case.number.eq_ignore_ascii_case(wanted))
-    {
-        return Ok(case.clone());
+    // The server can narrow the list down by the number and the title of a
+    // case, so the common case (a number) costs one small request instead of
+    // the whole list of the project.
+    let filters = TestCaseFilters {
+        status: Some("all".to_string()),
+        search: Some(wanted.to_string()),
+        ..Default::default()
+    };
+    let candidates = client.list_test_cases(project_id, &filters).await?;
+    if let Some(case) = exact_number(&candidates, wanted) {
+        return Ok(case);
     }
-    let found = find_best_match(wanted, &cases, |case| case.title.as_str());
-    match found {
+    if let Some(found) = find_best_match(wanted, &candidates, |case| case.title.as_str()) {
+        return Ok(found.item.clone());
+    }
+    // The search of the server matches the number and the title, but a
+    // fuzzy match may still find a case the search did not: the whole list
+    // is the last resort.
+    let cases = all_cases(client, project_id).await?;
+    if let Some(case) = exact_number(&cases, wanted) {
+        return Ok(case);
+    }
+    match find_best_match(wanted, &cases, |case| case.title.as_str()) {
         Some(found) => Ok(found.item.clone()),
         None => Err(PlaneError::NotFound {
             message: format!("Test case not found: {query}"),
@@ -68,6 +82,14 @@ pub async fn resolve_test_case(
             ),
         }),
     }
+}
+
+/// The case whose number is `wanted`, whatever the case of its letters.
+fn exact_number(cases: &[TestCase], wanted: &str) -> Option<TestCase> {
+    cases
+        .iter()
+        .find(|case| case.number.eq_ignore_ascii_case(wanted))
+        .cloned()
 }
 
 /// Resolve a module code of a project by its code or its uuid.
@@ -80,18 +102,21 @@ pub async fn resolve_test_case_module(
     project_id: &str,
     query: &str,
 ) -> Result<TestCaseModule, PlaneError> {
+    let modules = client.list_test_case_modules(project_id).await?;
     if is_uuid(query) {
-        // A uuid is used as it is; the server refuses a module of another
-        // project with its own code (`module_not_in_project`).
+        // A uuid of a module of this project is read out of the registry, so
+        // the caller gets its code and its description as well. A uuid the
+        // registry does not know is passed on as it is: the server is the
+        // authority on which modules belong to the project, and it answers
+        // `module_not_in_project`.
+        if let Some(module) = modules.iter().find(|module| module.id == query) {
+            return Ok(module.clone());
+        }
         return Ok(TestCaseModule {
             id: query.to_string(),
-            code: String::new(),
-            description: String::new(),
-            created_at: String::new(),
-            updated_at: String::new(),
+            ..Default::default()
         });
     }
-    let modules = client.list_test_case_modules(project_id).await?;
     let wanted = query.trim();
     if let Some(module) = modules
         .iter()
