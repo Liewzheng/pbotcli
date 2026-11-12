@@ -164,9 +164,9 @@ pbot tc create -p PLANECLI --module CLI \
 
 # 3. create the batch — --executed-by defaults to "me"
 pbot run create -p PLANECLI --version 1.6.0 --build 42 --commit abc1234 \
-  --env bench --json
+  --environment bench --json
 
-# 4. add the case to the batch
+# 4. add the case to the batch (RUN-20261112-01 is the number the server assigned)
 pbot run add RUN-20261112-01 TC-CLI-001 -p PLANECLI --json
 
 # 5. write the verdict of step 2 with a screenshot
@@ -186,7 +186,7 @@ pbot run conclude RUN-20261112-01 --case TC-CLI-001 --conclusion PASS --yes -p P
 pbot run finalize RUN-20261112-01 -p PLANECLI --json
 ```
 
-Three details the flow above depends on:
+Four details the flow above depends on:
 
 - **`--yes` is required off a terminal.** A verdict and a conclusion are written once, so both
   commands ask before they write: on a terminal they prompt on stderr, and a script that is not on

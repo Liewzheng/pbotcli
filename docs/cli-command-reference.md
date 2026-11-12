@@ -49,25 +49,27 @@ Configuration is discovered from several files, highest priority first: `~/.conf
 |---|---|
 | 0 | Success |
 | 1 | Generic error |
-| 2 | Authentication error **or permission denied** — and a **usage error** (a flag or an argument clap refuses) |
-| 3 | Resource not found |
-| 4 | API error (includes HTTP status and field-level detail) — and a transport failure |
-| 5 | Validation error (client-side **or** server-side, when the server names a reason) |
+| 2 | Authentication error (HTTP 401) — and a **usage error** (a flag or an argument clap refuses) |
+| 3 | Resource not found (HTTP 404) |
+| 4 | API error — every other status the server answers (400, 403, 409, 429, 5xx) — and every transport failure |
+| 5 | Validation error the CLI raised itself (client-side) |
 
 Two details worth knowing before a script keys on these:
 
-- **A usage error exits 2, the same code as an authentication or a permission failure.** A missing
-  required flag, an unknown flag, or a subcommand that needs an argument is refused by clap
-  before any request is made; the message and the usage line go to **stderr**, so stdout stays
-  clean (`--json 2>/dev/null` yields nothing, not a broken document). Code 2 therefore means
-  "the CLI or the credential could not get that far" — it does not distinguish a wrong password
-  from a wrong flag.
-- **A refusal of the server that names a reason exits 5, not 4.** A `400` or a `409` whose body
-  carries a stable code (`invalid_test_case`, `conclusion_is_final`, `evidence_missing`, …) is a
-  validation failure the caller can act on; a `400` or a `409` without a code is still exit 5,
-  because a conflict of this API is a refusal of the write rather than a transport failure. Exit 4
-  is what is left: the transport failed, or the server answered with something the feature does
-  not describe.
+- **A usage error exits 2, the same code as an authentication failure.** A missing required flag, an
+  unknown flag, or a subcommand that needs an argument is refused by clap before any request is
+  made; the message and the usage line go to **stderr**, so stdout stays clean (`--json 2>/dev/null`
+  yields nothing, not a broken document). Code 2 therefore means "the CLI or the credential could
+  not get that far" — it does not distinguish a wrong password from a wrong flag.
+- **A permission failure is exit 4 on most commands, and exit 2 on the test-case feature.** The
+  general mapping puts every status the server did not answer with 401 or 404 into the API class,
+  so a 403 — a service principal without the grant on a project — exits 4. The test-case feature
+  (`tc`, `run`) has its own mapper and splits the classes finer: a 403 is a **permission failure**
+  (exit 2, with the server's own remedy in the message), and a 400 or a 409 whose body carries a
+  **stable reason code** (`invalid_test_case`, `conclusion_is_final`, `evidence_missing`, …) is a
+  **validation failure** (exit 5) — the reason the caller can act on. A 400 or a 409 without a
+  code is still exit 5 there, because a conflict of this API is a refusal of the write rather than
+  a transport failure.
 
 The classes of the test-case feature (`tc`, `run`) in one table:
 

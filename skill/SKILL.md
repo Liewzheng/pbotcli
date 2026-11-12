@@ -279,9 +279,9 @@ pbot tc steps TC-CLI-001 -p "Project" --json        # the step rows, not the cas
 pbot tc issues TC-CLI-001 -p "Project" --add ABC-123 --json
 
 # 3. create the batch — --executed-by defaults to "me"
-pbot run create -p "Project" --version 1.6.0 --build 42 --commit abc1234 --env bench --json
+pbot run create -p "Project" --version 1.6.0 --build 42 --commit abc1234 --environment bench --json
 
-# 4. add the case to the batch
+# 4. add the case to the batch (RUN-20261112-01 is the number the server assigned)
 pbot run add RUN-20261112-01 TC-CLI-001 -p "Project" --json
 
 # 5. write the verdict of step 2 with a screenshot
@@ -302,7 +302,7 @@ pbot run finalize RUN-20261112-01 -p "Project" --json
 pbot run summary RUN-20261112-01 -p "Project" --json
 ```
 
-**Three rules the flow depends on.**
+**Four rules the flow depends on.**
 
 - **`--yes` is required off a terminal.** A verdict and a conclusion are written once, so both
   commands ask before they write: on a terminal they prompt on stderr, and a script that is not on
@@ -328,22 +328,22 @@ both the local checks and every server refusal that carries a stable code.
 was typed, byte for byte — no Markdown conversion, no rewriting. `--actual-file` is the way to
 send a multi-line value.
 
-**The flags of the two groups** (every one of them is in
-[references/command-reference.md](references/command-reference.md), and `pbot tc … --help` /
-`pbot run … --help` is the truth):
+**The flags of the two groups** (the reference has every one of them, and
+`pbot tc … --help` / `pbot run … --help` is the truth):
 
-| Command | Flags beyond `-p` and `--json` |
+| Command | The flags the flow needs |
 |---|---|
-| `tc ls` | `--module`, `--priority`, `--issue`, `--status`, `--search`, `-l/--limit` |
-| `tc create` | `--module`, `--title`, `--purpose`, `--object-overview`, `--priority`, `--precondition`, `--environment`, `--related-feature`, `--remarks`, `--status`, `--step`, `--steps-file` |
-| `tc update` | the same field flags, plus `--module` and `--number` — both **refused** (the number is bound to the module) |
-| `tc steps` | `--step`, `--steps-file` |
-| `tc issues` | `-a/--add`, `-r/--remove` |
 | `tc module create` | `--code`, `-d/--description` |
-| `run ls` | `--status`, `--run-date`, `-l/--limit` |
+| `tc create` | `--module`, `--title`, `--purpose`, `--object-overview`, `--priority`, `--precondition`, `--environment`, `--step` |
+| `tc update` | the same field flags, plus `--module` and `--number` — both **refused** (the number is bound to the module) |
+| `tc ls` | `--module`, `--priority`, `--issue`, `--status`, `--search`, `-l/--limit` |
 | `run create` | `--version`, `--build`, `--commit`, `--environment`, `--run-date`, `--retest-of`, `--executed-by` |
 | `run step` | `--case`, `--step`, `--verdict`, `--actual`, `--actual-file`, `--image`, `-y/--yes` |
-| `run conclude` | `--case`, `--conclusion`, `--evidence`, `--evidence-file`, `--image`, `--remarks`, `--actual-result-summary`, `--na-reason`, `--na-criteria-source`, `--manual-executor`, `--manual-condition`, `-y/--yes` |
+| `run conclude` | `--case`, `--conclusion`, `--evidence`, `--evidence-file`, `--image`, `-y/--yes` |
+
+The rest — `--related-feature`, `--remarks`, `--status`, `--steps-file`,
+`--actual-result-summary`, `--na-reason`, `--na-criteria-source`,
+`--manual-executor`, `--manual-condition` — are in the reference.
 
 `--steps-file` hands the whole step table over at once: a JSON array
 (`[{"action": "…", "expected": "…"}]`) or one `action | expected result` per line.

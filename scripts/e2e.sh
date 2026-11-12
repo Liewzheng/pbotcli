@@ -66,7 +66,7 @@ st="$($PBOT wi show "$id" --no-comments --no-cache --json 2>/dev/null | jq -r .s
 
 say "attachment upload"
 png="/tmp/$MARK.png"
-python3 -c "import base64;open('$png','wb').write(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='))"
+python3 -c "import base64,sys;open(sys.argv[1],'wb').write(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='))" "$png"
 sleep "$PAUSE"
 $PBOT attachment attach "$id" -f "$png" -p "$PROJECT" --json >/dev/null 2>&1 && ok "attach" || die "attach"
 
@@ -96,8 +96,10 @@ up="$($PBOT attachment ls "$id" -p "$PROJECT" --no-cache --json 2>/dev/null | jq
 # reading the list of the batches, and a list that carries a batch without an
 # executor cannot be deserialized — the uuid skips that read entirely.
 #
-# The module code is 2 to 6 UPPERCASE letters, so the pid is spelled out in
-# letters: two smoke runs never fight over the same code.
+# The module code is 2 to 6 UPPERCASE letters, so the pid and a random number
+# are spelled out in letters: two smoke runs never fight over the same code.
+# The sum is taken modulo 26^5, so the code never grows past five letters
+# (plus the E) whatever the pid_max of the machine is.
 letters_of() {
   local n=$1 out="" alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZ"
   while [[ $n -gt 0 && ${#out} -lt 5 ]]; do
@@ -106,14 +108,23 @@ letters_of() {
   done
   printf '%s' "${out:-A}"
 }
-MODULE_CODE="E$(letters_of $$)"
+MODULE_CODE="E$(letters_of $(( ($$ + RANDOM) % (26 ** 5) )))"
+# The version under test is the version of the binary under test.
+PBOT_VERSION="$("$PBOT" --version | awk '{print $NF}')"
 
 say "test case: module, case, batch, verdict, conclusion, finalize"
-if ! $PBOT tc module ls -p "$PROJECT" --no-cache --json >/dev/null 2>&1; then
+probe_rc=0
+probe_out="$($PBOT tc module ls -p "$PROJECT" --no-cache --json 2>&1)" || probe_rc=$?
+if [[ $probe_rc -eq 3 ]]; then
+  # A 404: the instance does not serve the test-case routes at all.
   skip "the instance serves no test-case endpoints — the tc/run smoke is skipped"
+elif [[ $probe_rc -ne 0 ]]; then
+  # Anything else — a 401, a 429, a transport failure — is a real failure and
+  # must not pass as "the feature is not deployed here".
+  die "tc module ls (exit $probe_rc): $probe_out"
 else
   png="/tmp/$MARK-tc.png"
-  python3 -c "import base64;open('$png','wb').write(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='))"
+  python3 -c "import base64,sys;open(sys.argv[1],'wb').write(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='))" "$png"
 
   sleep "$PAUSE"
   $PBOT tc module create -p "$PROJECT" --code "$MODULE_CODE" \
@@ -138,10 +149,12 @@ else
   [[ -n "$case_number" ]] && ok "case $case_number" || die "tc create"
 
   sleep "$PAUSE"
-  run_json="$($PBOT run create -p "$PROJECT" --version 1.6.0 --build "$MARK" \
+  run_json="$($PBOT run create -p "$PROJECT" --version "$PBOT_VERSION" --build "$MARK" \
     --commit 0000000 --env "pbot e2e" --executed-by me --json 2>/dev/null || true)"
-  run_uuid="$(jq -r '.id // empty' <<<"$run_json")"
-  run_number="$(jq -r '.number // empty' <<<"$run_json")"
+  # One jq for the two values of the answer.
+  mapfile -t run_fields < <(jq -r '(.id // ""), (.number // "")' <<<"$run_json")
+  run_uuid="${run_fields[0]:-}"
+  run_number="${run_fields[1]:-}"
   [[ -n "$run_uuid" ]] && ok "batch $run_number" || die "run create"
 
   sleep "$PAUSE"
