@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.6.0] - 2026-11-12
 
 ### Added
 - `pbot tc` manages the **test cases** of a project: `tc ls` (filters `--module`, `--priority`,
@@ -37,6 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   is no flag that overwrites it.
 
 ### Fixed
+- The release workflow builds the Apple Silicon macOS artefact on `macos-15`. GitHub deprecated
+  the `macos-14` image, so the `aarch64-apple-darwin` job was cancelled the moment it was queued
+  — no runner, no log — and every job behind it (the global artefacts, the `.dmg`, the MSI, the
+  Debian packages, the Homebrew formula) was skipped: a tagged release produced no artefacts at
+  all. The runner label is now set explicitly in `dist-workspace.toml`; the other four targets
+  keep the labels cargo-dist picks for them.
 - A batch the server answers with a `null` for — no executor, a case record whose test case was
   deleted — no longer refuses the whole document: `run ls` and `run show` read it, and the JSON
   carries the empty string for the field, the shape every other absent field of a record has. The
