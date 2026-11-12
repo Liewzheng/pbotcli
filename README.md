@@ -132,6 +132,89 @@ pbot wi show ABC-123                 # by identifier, UUID, or name
 Every command takes `--help`; `docs/cli-command-reference.md` lists every flag, alias, and
 example.
 
+## Test cases
+
+`pbot tc` manages the **test cases** of a project, `pbot run` manages the **batches** that
+execute them. A case is named by its number (`TC-<module code>-<NNN>`) and a batch by its number
+(`RUN-<YYYYMMDD>-<NN>`) — **the server assigns both numbers**, the CLI never builds one.
+
+Two rules shape the whole feature: a verdict (of a step) and a conclusion (of a case) are written
+**once** — the server refuses a second write with `conclusion_is_final`, and there is **no flag
+that overwrites a verdict** — and a **completed** batch is **frozen**: every later write to it is
+refused with `run_completed`.
+
+The end-to-end flow, start to finish:
+
+```bash
+# 1. register the module code — it is the prefix of the case number
+pbot tc module create -p PLANECLI --code CLI --description "The command line" --json
+
+# 2. create the case: six mandatory header fields and at least one step
+#    (a step is written as "action | expected result")
+pbot tc create -p PLANECLI --module CLI \
+  --title "Log in with a valid account" \
+  --purpose "Check the login path of the web UI" \
+  --object-overview "The login form of the web UI" \
+  --priority P1 \
+  --precondition "The account exists and is active" \
+  --environment "Windows 10, Chrome 120" \
+  --step "Open the login page | The form is shown" \
+  --step "Log in with the valid account | The dashboard is shown" \
+  --json
+
+# 3. create the batch — --executed-by defaults to "me"
+pbot run create -p PLANECLI --version 1.6.0 --build 42 --commit abc1234 \
+  --environment bench --json
+
+# 4. add the case to the batch (RUN-20261112-01 is the number the server assigned)
+pbot run add RUN-20261112-01 TC-CLI-001 -p PLANECLI --json
+
+# 5. write the verdict of step 2 with a screenshot
+pbot run step RUN-20261112-01 --case TC-CLI-001 --step 2 --verdict fail \
+  --image ./shot.png --yes -p PLANECLI --json
+
+# 6. write the conclusion of the case — with evidence ON THE CASE
+pbot run conclude RUN-20261112-01 --case TC-CLI-001 --conclusion FAIL \
+  --evidence "the button stayed grey" --yes -p PLANECLI --json
+
+# 7. a second conclusion write is refused — the code says why
+pbot run conclude RUN-20261112-01 --case TC-CLI-001 --conclusion PASS --yes -p PLANECLI
+# Error: invalid_payload
+# conclusion_is_final (field conclusion): 结论一经写入不再修改，请作废该记录后在新批次中重测。
+
+# 8. close the batch
+pbot run finalize RUN-20261112-01 -p PLANECLI --json
+```
+
+Four details the flow above depends on:
+
+- **`--yes` is required off a terminal.** A verdict and a conclusion are written once, so both
+  commands ask before they write: on a terminal they prompt on stderr, and a script that is not on
+  a terminal has to pass `--yes`. Without it the command refuses before any request and nothing
+  is written.
+- **The evidence hangs on the case, not on the step.** The server counts case-level evidence only:
+  a case-level text (`--evidence` / `--evidence-file`) **or** a case-level file (`--image`).
+  A screenshot of a **step** does not count — the finalize answers `evidence_missing` with the
+  path `cases[TC-CLI-001].evidence` and names the case. The screenshot of step 2 above is
+  therefore *not* enough; step 6 has to carry the evidence of the case.
+- **A refused write prints the stable code of the server** (`conclusion_is_final`,
+  `evidence_missing`, `run_executed_by_missing`, `duplicate_case_number`, …) next to the sentence
+  of the server. Key on the code, never on the prose — it is the first word of the first line of
+  the error.
+- **The order of the two refusals matters.** A second conclusion write on an **open** batch is
+  refused with `conclusion_is_final`; the same write **after** the finalize is refused with
+  `run_completed`, because a completed batch is frozen and the freeze is checked first.
+
+The exit codes **of this feature** — the two groups have their own mapping, so a permission
+failure and a coded refusal are classes of their own: `0` success, `2` authentication **or**
+permission **or** a usage error, `3` not found, `4` API or transport failure, `5` validation —
+both the local checks and every server refusal that carries a stable code. The other commands
+follow the general table of the reference, where a 403 is exit 4.
+
+`docs/cli-command-reference.md` has every command and flag of both groups, including the
+evidence rule, the edges of `--run-date` (UTC), and the shapes of Markdown the local pre-check and
+the server do not read the same way.
+
 ## Output
 
 Tables go to **stderr**, JSON to **stdout**, so a pipe always carries JSON alone:

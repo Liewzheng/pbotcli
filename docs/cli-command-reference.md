@@ -49,10 +49,44 @@ Configuration is discovered from several files, highest priority first: `~/.conf
 |---|---|
 | 0 | Success |
 | 1 | Generic error |
-| 2 | Authentication error |
-| 3 | Resource not found |
-| 4 | API error (includes HTTP status and field-level detail) |
-| 5 | Validation error (client-side) |
+| 2 | Authentication error (HTTP 401) — and a **usage error** (a flag or an argument clap refuses) |
+| 3 | Resource not found (HTTP 404) |
+| 4 | API error — every other status the server answers (400, 403, 409, 429, 5xx) — and every transport failure. The message carries the HTTP status and the field-level detail of the answer |
+| 5 | Validation error the CLI raised itself (client-side) |
+
+This is the table **every command but `tc` and `run` follows**; those two groups have a mapping
+of their own, and the table at the end of this section has the split.
+
+Two details worth knowing before a script keys on these:
+
+- **A usage error exits 2, the same code as an authentication failure.** A missing required flag, an
+  unknown flag, or a subcommand that needs an argument is refused by clap before any request is
+  made; the message and the usage line go to **stderr**, so stdout stays clean (`--json 2>/dev/null`
+  yields nothing, not a broken document). Code 2 therefore means "the CLI or the credential could
+  not get that far" — it does not distinguish a wrong password from a wrong flag. **The three
+  classes are told apart by their message, not by the code**: a usage error prints the usage line,
+  an authentication failure prints `Authentication failed`, and a permission failure prints the
+  server's own remedy.
+- **A permission failure is exit 4 on most commands, and exit 2 on the test-case feature.** The
+  general mapping puts every status the server did not answer with 401 or 404 into the API class,
+  so a 403 — a service principal without the grant on a project — exits 4. The test-case feature
+  (`tc`, `run`) has its own mapper and splits the classes finer: a 403 is a **permission failure**
+  (exit 2, with the server's own remedy in the message), and a 400 or a 409 whose body carries a
+  **stable reason code** (`invalid_test_case`, `conclusion_is_final`, `evidence_missing`, …) is a
+  **validation failure** (exit 5) — the reason the caller can act on. A **409 without** a code is
+  exit 5 as well, because a conflict of this API is a refusal of the write rather than a transport
+  failure; a **400 without** a code is the API class (exit 4), like a 400 of any other command.
+
+### The test-case feature (`tc`, `run`) has its own mapping
+
+| Class | Exit | Examples |
+|---|---|---|
+| Success | 0 | the write landed, the read answered |
+| Authentication / permission | 2 | `401`, `403` — a service principal without the grant on the project |
+| Usage error | 2 | a missing required flag, an unknown flag |
+| Not found | 3 | a case or a batch that no project holds |
+| API / transport | 4 | a 5xx, a connection error, an answer the client cannot read, and a 400 that carries no reason code |
+| Validation | 5 | a local check, a 400 or a 409 that carries a stable reason code, and a 409 that carries none (a conflict of this API is a refusal of the write) |
 
 ## COMMANDS
 
@@ -73,6 +107,8 @@ Configuration is discovered from several files, highest priority first: `~/.conf
 | [`intake`](#pbot-intake) | Intake queue. |
 | [`doc`](#pbot-doc) | Documents / pages. |
 | [`attachment`](#pbot-attachment) | Work-item attachments (alias: `attachments`). |
+| [`tc`](#pbot-tc) | Test cases of a project. |
+| [`run`](#pbot-run) | Test runs (batches) of a project. |
 
 ---
 
@@ -934,6 +970,571 @@ List attachments on a work item.
 ```
 pbot attachment list <issue> [-p <project>] [--json]
 ```
+
+---
+
+## pbot tc
+
+The **test cases** of a project. A case is named by its number (`TC-<module code>-<NNN>`), and the
+**server assigns that number** — the CLI never builds one. The module code is the prefix of the
+number, so it is registered first (`pbot tc module create`); the server refuses a case whose
+module is not registered in the project.
+
+A case carries **six mandatory header fields** — title, purpose, object overview, priority,
+preconditions, environment — and **at least one step**. The CLI asks for all six, so its `--help`
+tells the truth about what the server refuses.
+
+Every read answers `--json` on stdout and a table on stderr; every write prints the number the
+server assigned. A refused write prints the **stable code** the server answered with
+(`invalid_test_case`, `module_code_format`, `module_code_taken`, `expected_is_unjudgeable`, …)
+together with the sentence of the server, one problem per line, each with the case and the step it
+belongs to. **Key on the code, never on the prose** — the code is the first word of the first line
+of the error, and it is the part the server promises to keep.
+
+### pbot tc list
+
+List the test cases of a project.
+
+**Aliases** `ls`
+
+```
+pbot tc list -p <project> [--module <code>] [--priority <P>] [--issue <work item>]
+                  [--status <active|all>] [--search <text>] [-l <limit>] [--json]
+```
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `-p, --project <project>` | Project name, identifier, or UUID (required). |
+| `--module <module>` | Filter by the module code, or the UUID of a module. |
+| `--priority <priority>` | Filter by priority: `P0`, `P1`, `P2`, `P3`. |
+| `--issue <issue>` | Filter by a linked work item (identifier or UUID). |
+| `--status <status>` | Filter by status: `active` (the default of the server) or `all`. |
+| `--search <text>` | Filter by the number or the title of a case. |
+| `-l, --limit <limit>` | Maximum results to show (default 50). |
+
+### pbot tc show
+
+Show one test case: its header fields, its steps and its work-item links.
+
+```
+pbot tc show <case> -p <project> [--json]
+```
+
+`<case>` is the number (`TC-CLI-001`), a UUID, or the title.
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `-p, --project <project>` | Project name, identifier, or UUID (required). |
+| `--json` | Print JSON to stdout instead of a table on stderr. |
+
+### pbot tc create
+
+Create a test case. The number is assigned by the server.
+
+```
+pbot tc create -p <project> --module <code> --title <title> --purpose <purpose>
+                  --object-overview <text> --priority <P> --precondition <text>
+                  --environment <text> [--related-feature <text>] [--remarks <text>]
+                  [--status <active|void>] [--step "action | expected result"]...
+                  [--steps-file <path>] [--json]
+```
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `-p, --project <project>` | Project name, identifier, or UUID (required). |
+| `--module <module>` | Module code of the case (the prefix of its number). |
+| `--title <title>` | Title of the case. **Required** by the server. |
+| `--purpose <purpose>` | What the case checks. **Required** by the server. |
+| `--object-overview <text>` | What is under test. **Required** by the server. |
+| `--priority <priority>` | `P0`, `P1`, `P2`, `P3`. **Required** by the server. |
+| `--precondition <text>` | What has to hold before the case runs. **Required** by the server. Alias `--preconditions`. |
+| `--environment <text>` | The environment and the version under test. **Required** by the server. Alias `--env`. |
+| `--related-feature <text>` | The feature the case belongs to. |
+| `--remarks <text>` | Free-form remarks. |
+| `--status <status>` | `active` (the default) or `void`. |
+| `--step "action \| expected result"` | One step (repeatable). |
+| `--steps-file <path>` | A file with the whole step table. |
+
+**The step format is `action | expected result`** — an action, a vertical bar, an expected
+result, on one line. Both halves are required; a line without a bar, or with an empty half, is
+refused locally (exit 5) before any request.
+
+`--steps-file` takes the whole table in one of two shapes:
+
+- a **JSON array** of steps — `[{"action": "Open the page", "expected": "The list is shown"}]`
+  (`expected_result` is accepted for the second key as well);
+- **plain lines**, one `action | expected result` per line. Blank lines and lines starting with
+  `#` are skipped.
+
+Both shapes feed the same table. The table is the **whole** table: a create writes every step it
+was given, and a later `tc steps` with steps replaces the table as a whole (see below).
+
+**Example**
+
+```bash
+pbot tc create -p PLANECLI --module CLI \
+  --title "Log in with a valid account" \
+  --purpose "Check the login path of the web UI" \
+  --object-overview "The login form of the web UI" \
+  --priority P1 \
+  --precondition "The account exists and is active" \
+  --environment "Windows 10, Chrome 120" \
+  --step "Open the login page | The form is shown" \
+  --step "Log in with the valid account | The dashboard is shown" \
+  --json
+```
+
+### pbot tc update
+
+Update a test case. Every field is optional; an unset field is left alone.
+
+```
+pbot tc update <case> -p <project> [--title <title>] [--purpose <purpose>]
+                  [--object-overview <text>] [--priority <P>] [--precondition <text>]
+                  [--environment <text>] [--related-feature <text>] [--remarks <text>]
+                  [--status <active|void>] [--step "action | expected result"]...
+                  [--steps-file <path>] [--module <module>] [--number <number>] [--json]
+```
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `-p, --project <project>` | Project name, identifier, or UUID (required). |
+| `--title <title>` | New title. |
+| `--purpose <purpose>` | New purpose. |
+| `--object-overview <text>` | New object overview. |
+| `--priority <priority>` | New priority: `P0`, `P1`, `P2`, `P3`. |
+| `--precondition <text>` | New preconditions. Alias `--preconditions`. |
+| `--environment <text>` | New environment. Alias `--env`. |
+| `--related-feature <text>` | New related feature. |
+| `--remarks <text>` | New remarks. |
+| `--status <status>` | New status: `active` or `void`. |
+| `--step "action \| expected result"` | The whole step table, one step per "action \| expected result" (repeatable). The table is replaced as a whole. |
+| `--steps-file <path>` | A file with the whole step table (a JSON array, or one "action \| expected result" per line). |
+| `--module <module>` | **Refused** (exit 5): the module of a case cannot be changed. The flag exists so the refusal names the field the caller tried to change. |
+| `--number <number>` | **Refused** (exit 5): the number of a case is assigned by the server and is part of the record of every run. |
+
+**The number and the module of a case cannot be changed.** The number is bound to the module and
+is part of the record of every run, and the server keeps both. `--module` and `--number` exist so
+the refusal names the field the caller tried to change; either one is refused locally (exit 5)
+before any request, so nothing has to be undone.
+
+`--step` / `--steps-file` replace the **whole** step table: every step has to be passed again, the
+server drops the rows that are not in the list.
+
+### pbot tc steps
+
+Read or replace the step table of a test case.
+
+```
+pbot tc steps <case> -p <project> [--step "action | expected result"]...
+                  [--steps-file <path>] [--json]
+```
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `-p, --project <project>` | Project name, identifier, or UUID (required). |
+| `--step "action \| expected result"` | One step (repeatable). |
+| `--steps-file <path>` | A file with the whole step table (a JSON array, or one "action \| expected result" per line). |
+| `--json` | Print JSON to stdout instead of a table on stderr. |
+
+Without a step the table is read; with steps the **whole** table is replaced.
+
+> **The table of the steps is printed, not the number of the case.** `pbot tc steps TC-CLI-001`
+> prints the rows of the table — a `Step`, `Action` and `Expected result` table on stderr, and the
+> same rows as a JSON array on stdout — and **not** the `TC-CLI-001` number. The number of the
+> case is what `pbot tc show` prints; the table of the steps is what `pbot tc steps` prints.
+
+### pbot tc issues
+
+List, add or remove the work-item links of a test case.
+
+```
+pbot tc issues <case> -p <project> [-a <work item>] [-r <work item>] [--json]
+```
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `-p, --project <project>` | Project name, identifier, or UUID (required). |
+| `-a, --add <work item>` | Link a work item (identifier or UUID). |
+| `-r, --remove <work item>` | Unlink a work item (identifier or UUID). |
+| `--json` | Print JSON to stdout instead of a table on stderr. |
+
+`--add` and `--remove` are mutually exclusive. Without either the links are listed.
+
+### pbot tc delete
+
+Delete a test case. **Destructive:** the server only lets a project admin remove a case, and the
+refusal carries the server's own sentence.
+
+```
+pbot tc delete <case> -p <project> [--json]
+```
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `-p, --project <project>` | Project name, identifier, or UUID (required). |
+| `--json` | Print JSON to stdout instead of a table on stderr. |
+
+### pbot tc module list
+
+List the registered module codes of a project.
+
+**Aliases** `ls`
+
+```
+pbot tc module list -p <project> [--json]
+```
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `-p, --project <project>` | Project name, identifier, or UUID (required). |
+| `--json` | Print JSON to stdout instead of a table on stderr. |
+
+### pbot tc module create
+
+Register a module code. The server owns the rules of a code: 2 to 6 uppercase letters, unique
+inside the project. A refused code is reported with the server's own code (`module_code_format`,
+`module_code_taken`) and its sentence.
+
+```
+pbot tc module create -p <project> --code <code> [-d <description>] [--json]
+```
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `-p, --project <project>` | Project name, identifier, or UUID (required). |
+| `--code <code>` | The module code, for example `CLI`. |
+| `-d, --description <text>` | What the module covers. |
+
+---
+
+## pbot run
+
+The **test runs (batches)** of a project. A batch is one continuous execution of test cases. It is
+named by its number (`RUN-<YYYYMMDD>-<NN>`), and the **server assigns that number** — the CLI
+never builds one and never writes one.
+
+Two rules of the feature shape this whole group:
+
+- A **verdict** (the verdict of a step) and a **conclusion** (the verdict of a case) are written
+  **once**. The server refuses a second write with `conclusion_is_final`, and a wrong one is
+  corrected by voiding the record and running the case again in a new batch. So both writes ask
+  before they write, and **no flag of this group overwrites a verdict that is already recorded**.
+- A **completed** batch is frozen: every write to it is refused with `run_completed`, and the CLI
+  never retries such a refusal on its own.
+
+### pbot run list
+
+List the batches of a project.
+
+**Aliases** `ls`
+
+```
+pbot run list -p <project> [--status <status>] [--run-date <YYYY-MM-DD>] [-l <limit>] [--json]
+```
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `-p, --project <project>` | Project name, identifier, or UUID (required). |
+| `--status <status>` | Filter by status: `draft`, `in_progress`, `completed`, or `all`. |
+| `--run-date <date>` | Filter by the day of the execution (`YYYY-MM-DD`). |
+| `-l, --limit <limit>` | Maximum results to show (default 50). |
+
+### pbot run show
+
+Show one batch: its header, its cases, their steps and their files.
+
+```
+pbot run show <run> -p <project> [--json]
+```
+
+`<run>` is the number (`RUN-20261109-01`) or a UUID.
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `-p, --project <project>` | Project name, identifier, or UUID (required). |
+| `--json` | Print JSON to stdout instead of a table on stderr. |
+
+A batch the server answers with a `null` for — no executor, a case whose test case was deleted —
+still reads: the `null` is the empty string, the shape every other absent field of a record
+carries.
+
+### pbot run create
+
+Create a batch. The number is assigned by the server.
+
+```
+pbot run create -p <project> --version <version> --build <build> --commit <commit>
+                  --environment <env> [--run-date <YYYY-MM-DD>] [--retest-of <run>]
+                  [--executed-by <who>] [--json]
+```
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `-p, --project <project>` | Project name, identifier, or UUID (required). |
+| `--version <version>` | The version under test (frozen once the batch is created). |
+| `--build <build>` | The build under test (frozen once the batch is created). |
+| `--commit <commit>` | The commit under test (frozen once the batch is created). |
+| `--environment <env>` | The environment the batch ran in. Alias `--env`. |
+| `--run-date <YYYY-MM-DD>` | The day of the execution (default: today, in **UTC**). |
+| `--retest-of <run>` | The batch this one re-tests (number or UUID). |
+| `--executed-by <who>` | Who executed the batch: `me` (the default), a name, or a UUID. |
+
+`--version`, `--build`, `--commit` and `--environment` are asked for because the server refuses to
+close a batch that does not carry them, and this group has no command that fills them in later.
+
+**`--executed-by` defaults to `me`**, which under a service-principal token resolves to the
+principal's shadow bot member — the same `me` the rest of the CLI uses. The batch needs an
+executor: a batch without one cannot be closed. The server refuses such a finalize with
+`run_executed_by_missing`, and the CLI refuses it **before** the request (exit 5) with the same
+remedy — so the reason code of the server is the one a caller reading the API sees, not the one
+the CLI prints.
+
+**`--run-date` is UTC, and it is frozen after the creation.** The default is *today in UTC*, not
+today where the operator sits: an operator at UTC+8 who creates a batch between 00:00 and 08:00
+local time gets the **previous UTC day** in `run_date`, and the number of the batch carries that
+day too (`RUN-<YYYYMMDD>-<NN>`). Pass `--run-date` explicitly when the day has to be the local
+one. The day of a batch cannot be changed afterwards — the server refuses the write with
+`run_date_fixed`.
+
+**`--retest-of` links the batch to the batch it re-tests.** A re-test runs in the project of its
+original and never in a ring: the server refuses a link into another project
+(`retest_of_project_mismatch`), a link into itself (`retest_of_self`), and a link that would close
+a ring (`retest_of_cycle`). The listing shows the link in the `Retest of` column as
+`retest of RUN-20261109-01` — **in English**, unlike the web UI, which writes 补测.
+
+### pbot run add
+
+Add test cases to a batch.
+
+```
+pbot run add <run> <case>... -p <project> [--json]
+```
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `-p, --project <project>` | Project name, identifier, or UUID (required). |
+| `--json` | Print JSON to stdout instead of a table on stderr. |
+
+The server **snapshots** every case that is added, so a later edit of the case never rewrites what
+the batch recorded. A case that is already in the batch is refused with `duplicate_case_number`;
+the CLI reads the batch first and refuses the duplicate before the request, naming the case.
+
+### pbot run step
+
+Write the verdict and the measured value of one step.
+
+```
+pbot run step <run> --case <case> --step <n> --verdict <verdict>
+                  [--actual <markdown>] [--actual-file <path>] [--image <path>]
+                  [--yes] -p <project> [--json]
+```
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `--case <case>` | The case of the batch (`TC-CLI-007`). |
+| `--step <n>` | The number of the step in the case (1, 2, 3 …). |
+| `--verdict <verdict>` | `pass`, `fail` or `unset` — a step that was not executed is `unset`. `N/A` is a conclusion of a case, not a verdict of a step, and is refused locally. |
+| `--actual <markdown>` | The measured value. |
+| `--actual-file <path>` | A file with the measured value. `--actual` and `--actual-file` are mutually exclusive. |
+| `--image <path>` | A screenshot of the step. |
+| `-y, --yes` | Confirm the write (needed when the command is not on a terminal). |
+
+**The measured value reaches the server as it was typed — no conversion, no rewriting.** `--actual`
+sends the string verbatim; `--actual-file` sends the bytes of the file verbatim, newlines and
+all. Neither is Markdown-converted on the way: what the file holds is what the server stores.
+
+**`--yes` is required off a terminal.** The verdict of a step is written once, so the command asks
+before it writes: on a terminal it prompts on stderr (`… — write it? [y/N]`), and a script that is
+not on a terminal has to pass `--yes`. Without `--yes` and without a terminal the command refuses
+before any request (exit 5) and nothing is written.
+
+**A screenshot of a step does not satisfy the finalize.** The evidence of a case hangs on the case
+itself — see [the evidence rule](#the-evidence-rule-of-a-case) below.
+
+### pbot run conclude
+
+Write the conclusion of one case of a batch.
+
+```
+pbot run conclude <run> --case <case> --conclusion <conclusion>
+                      [--evidence <markdown>] [--evidence-file <path>] [--image <path>]
+                      [--remarks <text>] [--actual-result-summary <text>]
+                      [--na-reason <text>] [--na-criteria-source <text>]
+                      [--manual-executor <who>] [--manual-condition <text>]
+                      [--yes] -p <project> [--json]
+```
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `--case <case>` | The case of the batch (`TC-CLI-007`). |
+| `--conclusion <conclusion>` | `PASS`, `FAIL`, `N/A` or `MANUAL` (`NA` is accepted and normalized to `N/A`). |
+| `--evidence <markdown>` | The evidence of the case. |
+| `--evidence-file <path>` | A file with the evidence of the case (the bytes reach the server verbatim). `--evidence` and `--evidence-file` are mutually exclusive. |
+| `--image <path>` | A screenshot of the case — the evidence of a case on its own is enough. |
+| `--remarks <text>` | Free-form remarks. |
+| `--actual-result-summary <text>` | The one-line phenomenon of the case (the summary shows it). |
+| `--na-reason <text>` | Why the case does not apply (a `N/A` case needs it). |
+| `--na-criteria-source <text>` | Where the criterion of a `N/A` case comes from. |
+| `--manual-executor <who>` | Who ran the case by hand (a `MANUAL` case needs it). |
+| `--manual-condition <text>` | Under which condition the case was run by hand. |
+| `-y, --yes` | Confirm the write (needed when the command is not on a terminal). |
+
+The conclusion of a case is written **once**: the server refuses a second write with
+`conclusion_is_final`, and there is **no flag that overwrites it**. A wrong conclusion is
+corrected by voiding the record and running the case again in a new batch
+(`pbot run create --retest-of <run>`).
+
+**Which code the refusal carries depends on the order.** A second write on an **open** batch is
+refused with `conclusion_is_final`; the same write **after** the finalize is refused with
+`run_completed`, because a completed batch is frozen and the freeze is checked first. Read the
+code, not the order you expected.
+
+### pbot run remove
+
+Take a case out of a batch.
+
+```
+pbot run remove <run> --case <case> -p <project> [--json]
+```
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `--case <case>` | The case of the batch (`TC-CLI-007`). |
+| `-p, --project <project>` | Project name, identifier, or UUID (required). |
+| `--json` | Print JSON to stdout instead of a table on stderr. |
+
+A record that already carries a verdict or a conclusion stays in the batch: the server refuses the
+removal with `run_case_removal_after_execution`.
+
+### pbot run finalize
+
+Close a batch: the server runs the validity rules over it.
+
+```
+pbot run finalize <run> -p <project> [--json]
+```
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `-p, --project <project>` | Project name, identifier, or UUID (required). |
+| `--json` | Print JSON to stdout instead of a table on stderr. |
+
+A refused finalize lists **every** problem it found, one per line, each with the case and the step
+it belongs to:
+
+```
+Error: invalid_batch
+conclusion_invalid (case TC-CLI-001): 结论必须是 PASS、FAIL、N/A 或需人工。
+evidence_missing (case TC-CLI-001): 缺少必填项：证据。
+Hint: Every reason above names the case and the step it belongs to; fix them and finalize again. …
+```
+
+The batch stays open until every problem is fixed. A batch that is closed is **frozen** — every
+later write to it is refused with `run_completed`.
+
+### pbot run summary
+
+The summary of a batch: the four counts and the deviations.
+
+```
+pbot run summary <run> -p <project> [--json]
+```
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `-p, --project <project>` | Project name, identifier, or UUID (required). |
+| `--json` | Print JSON to stdout instead of a table on stderr. |
+
+**The four counts are not a partition of the total.** A case that failed on one step and was never
+executed on another is counted twice, so `fail` and `manual` may both count the same case: a batch
+with one concluded `FAIL` case reports `total: 1`, `fail: 1`, `manual: 1` — the overlap is what
+"not a partition" means, and it is what the server returns. Do not add the counts up and compare
+the sum with `total`.
+
+---
+
+## The evidence rule of a case
+
+The server refuses to close a batch whose cases carry no evidence, and it counts **case-level**
+evidence only: a non-empty **case-level text** **or** at least one **case-level attachment**. A
+screenshot of a **step** is bound to the step record, so it does **not** count — the finalize
+answers `evidence_missing` with the path `cases[TC-CLI-001].evidence` and names the case.
+
+The two ways to write the evidence of a case are `--evidence` / `--evidence-file` (a text) and
+`--image` (a file); either one on its own is enough:
+
+```bash
+# a text
+pbot run conclude RUN-20261109-01 --case TC-CLI-007 --conclusion FAIL --evidence "the button stayed grey" --yes
+# a screenshot, and nothing else
+pbot run conclude RUN-20261109-01 --case TC-CLI-007 --conclusion FAIL --image ./shot.png --yes
+```
+
+The CLI reads the text the way the server reads it — a value that holds nothing but a placeholder
+(`—`, `TBD`, `待补充`, …) carries no text, and a value that holds nothing but a picture
+(`![](shot.png)`) carries none either, because a picture is a file and not a sentence. The notice
+the CLI prints is **warn-only**: it never refuses a write, and the server still refuses the batch
+and names the case.
+
+### The residue: shapes the two reads do not agree on
+
+The local pre-check and the server do not read every shape of Markdown the same way. The
+difference is always **warn-only** — the CLI never refuses a write over it, and the server still
+decides — but a tester who knows the shapes is not surprised by a notice the server does not
+justify, or by a refusal the CLI did not warn about.
+
+**Shapes the CLI reads as text and the server reads as no text** (the CLI stays quiet, the server
+refuses the finalize): block markup around a placeholder — `> TBD`, `# TBD`, `- TBD`, `1. TBD`,
+`* TBD` — a placeholder inside a link — `[TBD](url)` — `~~TBD~~`, `&nbsp;TBD`, a fenced block with
+an info string — ` ```text TBD ``` ` — `~~~~` fences, and a link reference definition —
+`[ref]: shot.png`.
+
+**Shapes the CLI reads as no text and the server reads as text** (the CLI warns, the server
+accepts): an unclosed emphasis — `**TBD`, `***TBD`, `TBD**`, `** ![](x.png) **`.
+
+### The orphan upload
+
+`--image` **uploads and binds the file before the write is made**, so a write the server refuses
+can leave an attachment bound to the record — the file is on the record, the verdict is not. It
+never changes a verdict: the refused write stays refused, and the record keeps the verdict it
+already had. The file can be written again on the next attempt; the conclusion cannot.
 
 ---
 

@@ -24,6 +24,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Member;
+use crate::null_to_empty;
 
 /// The conclusions a case record of a batch may carry.
 ///
@@ -57,7 +58,11 @@ pub struct TestRun {
     #[serde(default)]
     pub environment: String,
     /// The uuid of the user that executed the batch.
-    #[serde(default)]
+    ///
+    /// The server answers `null` for a batch that was created without an
+    /// executor, so the field tolerates a `null` and reads it as the
+    /// empty string.
+    #[serde(default, deserialize_with = "null_to_empty")]
     pub executed_by: String,
     /// The name of that user — the snapshot the server keeps next to
     /// the id, so the history of the batch survives the deletion of the
@@ -142,7 +147,12 @@ pub struct TestRunFilters {
 pub struct TestRunCase {
     pub id: String,
     /// The uuid of the test case this record was made of.
-    #[serde(default)]
+    ///
+    /// The server answers `null` for a record whose test case was
+    /// deleted, so the field tolerates a `null` and reads it as the empty
+    /// string — the same shape the other absent fields of the record
+    /// carry.
+    #[serde(default, deserialize_with = "null_to_empty")]
     pub test_case: String,
     #[serde(default)]
     pub case_number: String,
@@ -363,6 +373,34 @@ mod tests {
         assert_eq!(run.number, "");
         assert_eq!(run.retest_of, None);
         assert_eq!(run.retest_of_number, None);
+    }
+
+    #[test]
+    fn a_field_that_is_not_a_string_at_all_is_still_refused() {
+        // Only the `null` is tolerated: a number where the field is a
+        // string is a drift of the shape, and the client has to see it.
+        let raw = r#"{"id": "r1", "executed_by": 42}"#;
+        let err = serde_json::from_str::<TestRun>(raw).unwrap_err();
+        assert!(err.to_string().contains("string"), "{err}");
+    }
+
+    #[test]
+    fn reads_a_batch_whose_executor_the_server_answers_with_null() {
+        // The shape of the live instance: a batch created without an
+        // executor carries an explicit `null`, and `#[serde(default)]`
+        // does not cover a `null` value — only a missing key.
+        let raw = r#"{
+            "id": "r1",
+            "number": "RUN-20261110-08",
+            "executed_by": null,
+            "executed_by_name": "",
+            "cases": [{"id": "rc1", "test_case": null, "case_number": "TC-PWR-001"}]
+        }"#;
+        let run: TestRun = serde_json::from_str(raw).expect("a null must not refuse the record");
+        assert_eq!(run.executed_by, "");
+        assert_eq!(run.executed_by_name, "");
+        assert_eq!(run.cases[0].test_case, "");
+        assert_eq!(run.cases[0].case_number, "TC-PWR-001");
     }
 
     #[test]

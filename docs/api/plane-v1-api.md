@@ -136,6 +136,54 @@ column), never the intake wrapper `id`.
 `description_html` is a **required** field on create (an empty `<p></p>` is
 sent when no content is given).
 
+## test cases
+
+| Method | Path | Notes |
+|---|---|---|
+| GET / POST | `/api/v1/workspaces/{ws}/projects/{project_id}/test-case-modules/` | The registry of the module codes (POST body `{code, description?}`). The code is 2 to 6 uppercase letters, unique in the project |
+| GET | `/api/v1/workspaces/{ws}/projects/{project_id}/test-cases/` | List (paginated). Query: `module`, `priority`, `issue`, `status`, `search`, `limit`, `cursor` |
+| GET / POST | `/api/v1/workspaces/{ws}/projects/{project_id}/test-cases/` | Create — body `{module, title, purpose, object_overview, priority, preconditions, environment, related_feature?, remarks?, status?, steps?}`. **The number of the case is assigned by the server**, and the six header fields above are refused when they are missing |
+| GET / PATCH / DELETE | `/api/v1/workspaces/{ws}/projects/{project_id}/test-cases/{id}/` | Detail / update / delete. The number and the module of a case cannot be changed |
+| GET / PUT | `/api/v1/workspaces/{ws}/projects/{project_id}/test-cases/{id}/steps/` | The step table. `PUT` replaces it **as a whole** — body `{steps: [{action, expected_result}]}` |
+| GET / POST | `/api/v1/workspaces/{ws}/projects/{project_id}/test-cases/{id}/issues/` | The work-item links of the case (POST body `{issue_id}`) |
+| DELETE | `/api/v1/workspaces/{ws}/projects/{project_id}/test-cases/{id}/issues/{issue_id}/` | Remove a link |
+
+## test runs (batches)
+
+| Method | Path | Notes |
+|---|---|---|
+| GET / POST | `/api/v1/workspaces/{ws}/projects/{project_id}/test-runs/` | List (paginated; query `status`, `run_date`, `limit`, `cursor`) / create — body `{run_date?, version_number, build_number, commit_hash, environment, executed_by?, retest_of?}`. **The number of the batch is assigned by the server** from its day |
+| GET | `/api/v1/workspaces/{ws}/projects/{project_id}/test-runs/{run_id}/` | Detail — the header, the case records, their steps and their files |
+| POST | `/api/v1/workspaces/{ws}/projects/{project_id}/test-runs/{run_id}/cases/` | Add cases — body `{test_case_ids: [uuid…]}`. The server **snapshots** every case; a case that is already in the batch is refused with `duplicate_case_number` (409) |
+| GET / PATCH / DELETE | `/api/v1/workspaces/{ws}/projects/{project_id}/test-runs/{run_id}/cases/{case_id}/` | One case record. `PATCH` writes the conclusion and the fields around it — body `{conclusion?, evidence?, remarks?, actual_result_summary?, na_reason?, na_criteria_source?, manual_executor?, manual_condition?}` |
+| GET / PATCH | `/api/v1/workspaces/{ws}/projects/{project_id}/test-runs/{run_id}/cases/{case_id}/steps/{sequence_id}/` | One step record. `PATCH` writes the verdict and the measured value — body `{conclusion?, actual_value?}` |
+| POST | `/api/v1/workspaces/{ws}/projects/{project_id}/test-runs/{run_id}/finalize/` | Close the batch: the server runs the validity rules over it |
+| GET | `/api/v1/workspaces/{ws}/projects/{project_id}/test-runs/{run_id}/summary/` | The four counts and the deviations |
+
+**A verdict and a conclusion are written once.** The server refuses a second write with
+`conclusion_is_final`, and a **completed** batch is frozen — every write to it is refused with
+`run_completed`.
+
+**The evidence hangs on the case.** The finalize counts **case-level** evidence only: a non-empty
+case-level text **or** at least one case-level attachment. A file bound to a **step** does not
+count, and the refusal names the case (`evidence_missing`, path `cases[TC-…].evidence`). The
+batch also needs an executor: without `executed_by` the finalize is refused with
+`run_executed_by_missing`.
+
+**A refused write names a stable code.** The body of a refusal is
+`{error, code, errors: [{code, message, path, field, case_number?, step_sequence?}]}` — key on
+the `code`, never on the prose.
+
+## test evidence files
+
+| Method | Path | Notes |
+|---|---|---|
+| POST | `/api/v1/workspaces/{ws}/assets/` | Register a file — body `{name, type, size, entity_type, project_id, entity_identifier}`. `entity_type` is `TEST_RUN_CASE_EVIDENCE` for a file of a case record and `TEST_RUN_STEP_RECORD` for a file of a step record; `entity_identifier` is the uuid of the record |
+| PUT | the presigned target of the answer | The bytes ride to the presigned URL — that request carries **no** API key |
+
+The file is bound to the record **at the upload**, before the write that may be refused: a refused
+write can leave an attachment bound to the record, never a wrong verdict.
+
 ## estimate points
 
 There is **no dedicated endpoint** — estimate points are derived from work

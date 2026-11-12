@@ -226,73 +226,106 @@ fn format_envelope(envelope: &ErrorEnvelope, status: u16) -> String {
     parts.join("\n")
 }
 
+/// The codes that only **wrap** the reason they carry.
+///
+/// The server answers a refused write with the reason of the refusal and
+/// wraps it in a code of its own: `invalid_payload` for a write it
+/// refused, `conflict` for a record that changed in the meantime. The
+/// remedy of such a code is the remedy of the reason it wraps — never
+/// its own, which would only say "the payload was refused".
+fn is_wrapper(code: &str) -> bool {
+    matches!(code, "invalid_payload" | "conflict")
+}
+
 /// The next step to run, named by the stable code the server refused with.
+///
+/// The **reason** of a problem wins over the code that wraps it: a
+/// refusal of a conclusion carries `invalid_payload` around the reason it
+/// refused for, and the remedy of the reason — "a conclusion is written
+/// once", "the case needs evidence" — is the one the caller can act on.
+/// A code that has a remedy of its own keeps it: `invalid_batch` names
+/// the case and the step of every problem above it.
 fn hint_for(envelope: &ErrorEnvelope) -> String {
-    for code in envelope.codes() {
-        let hint = match code.as_str() {
-            "module_code_format" => {
-                "The module code must be 2 to 6 uppercase letters (for example CLI)."
-            }
-            "module_description_missing" => "Pass --description with the module description.",
-            "module_code_taken" => {
-                "The module code is already registered in this project; pick another one."
-            }
-            "module_not_in_project" => {
-                "Use a module of this project: run `pbot tc module ls -p <project>`."
-            }
-            "issue_not_in_project" => {
-                "Link a work item of the same project: run `pbot wi ls -p <project>`."
-            }
-            "issue_link_exists" => "The work item is already linked to this test case.",
-            "invalid_test_case" => "Fix the fields the server named and run the command again.",
-            "invalid_payload" => "Check the payload the server refused and run the command again.",
-            "invalid_batch" => {
-                "Every reason above names the case and the step it belongs to; fix them and finalize again. The evidence of a case hangs on the case itself (--evidence/--evidence-file, or --image) — a screenshot of a step does not count."
-            }
-            "conflict" => {
-                "The record changed in the meantime; read it again and re-apply your change."
-            }
-            // --- the codes of the batches ---------------------------------
-            "evidence_missing" => {
-                "The case needs evidence before the batch can be closed: pass --evidence/--evidence-file (or --image) to `pbot run conclude`. A screenshot of a step does not count — the evidence hangs on the case."
-            }
-            "conclusion_is_final" => {
-                "A conclusion and a verdict are written once; there is no flag that overwrites them. Void the record and run the case again in a new batch."
-            }
-            "run_completed" => {
-                "A completed batch is frozen. Open a new batch for the re-test: `pbot run create --retest-of <RUN>`."
-            }
-            "duplicate_case_number" => {
-                "The case is already in this batch. Read the batch (`pbot run show <RUN>`) before adding it again."
-            }
-            "run_case_removal_after_execution" => {
-                "The record already carries a verdict or a conclusion; re-run the case in a new batch instead of taking it out."
-            }
-            "retest_of_project_mismatch" => {
-                "A re-test runs in the project of its original; the batch named by --retest-of belongs to another project."
-            }
-            "retest_of_self" => "A batch cannot be a re-test of itself.",
-            "retest_of_cycle" => {
-                "The re-test link would close a ring; a batch may not re-test a batch that already re-tests it."
-            }
-            "run_executed_by_missing" => {
-                "The batch carries no executor; create the batch with `pbot run create --executed-by me`."
-            }
-            "run_version_fixed" => {
-                "The tested version of a batch is frozen; open a new batch for another version."
-            }
-            "run_date_fixed" => {
-                "The execution date of a batch is frozen; open a new batch for another day."
-            }
-            "test_case_ids_missing" => "Name at least one case to add to the batch.",
-            "case_not_in_project" => {
-                "Add a case of the same project: run `pbot tc ls -p <project>`."
-            }
-            _ => continue,
-        };
+    let wrapper = envelope.code.as_deref().unwrap_or_default();
+    if !is_wrapper(wrapper)
+        && let Some(hint) = hint_for_code(wrapper)
+    {
+        return hint.to_string();
+    }
+    for entry in &envelope.errors {
+        if entry.code.is_empty() {
+            continue;
+        }
+        if let Some(hint) = hint_for_code(&entry.code) {
+            return hint.to_string();
+        }
+    }
+    if let Some(hint) = hint_for_code(wrapper) {
         return hint.to_string();
     }
     "Fix what the server reported and run the command again.".to_string()
+}
+
+/// The remedy of a code that has one of its own.
+fn hint_for_code(code: &str) -> Option<&'static str> {
+    let hint = match code {
+        "module_code_format" => {
+            "The module code must be 2 to 6 uppercase letters (for example CLI)."
+        }
+        "module_description_missing" => "Pass --description with the module description.",
+        "module_code_taken" => {
+            "The module code is already registered in this project; pick another one."
+        }
+        "module_not_in_project" => {
+            "Use a module of this project: run `pbot tc module ls -p <project>`."
+        }
+        "issue_not_in_project" => {
+            "Link a work item of the same project: run `pbot wi ls -p <project>`."
+        }
+        "issue_link_exists" => "The work item is already linked to this test case.",
+        "invalid_test_case" => "Fix the fields the server named and run the command again.",
+        "invalid_payload" => "Check the payload the server refused and run the command again.",
+        "invalid_batch" => {
+            "Every reason above names the case and the step it belongs to; fix them and finalize again. The evidence of a case hangs on the case itself (--evidence/--evidence-file, or --image) — a screenshot of a step does not count."
+        }
+        "conflict" => "The record changed in the meantime; read it again and re-apply your change.",
+        // --- the codes of the batches ---------------------------------
+        "evidence_missing" => {
+            "The case needs evidence before the batch can be closed: pass --evidence/--evidence-file (or --image) to `pbot run conclude`. A screenshot of a step does not count — the evidence hangs on the case."
+        }
+        "conclusion_is_final" => {
+            "A conclusion and a verdict are written once; there is no flag that overwrites them. Void the record and run the case again in a new batch."
+        }
+        "run_completed" => {
+            "A completed batch is frozen. Open a new batch for the re-test: `pbot run create --retest-of <RUN>`."
+        }
+        "duplicate_case_number" => {
+            "The case is already in this batch. Read the batch (`pbot run show <RUN>`) before adding it again."
+        }
+        "run_case_removal_after_execution" => {
+            "The record already carries a verdict or a conclusion; re-run the case in a new batch instead of taking it out."
+        }
+        "retest_of_project_mismatch" => {
+            "A re-test runs in the project of its original; the batch named by --retest-of belongs to another project."
+        }
+        "retest_of_self" => "A batch cannot be a re-test of itself.",
+        "retest_of_cycle" => {
+            "The re-test link would close a ring; a batch may not re-test a batch that already re-tests it."
+        }
+        "run_executed_by_missing" => {
+            "The batch carries no executor; create the batch with `pbot run create --executed-by me`."
+        }
+        "run_version_fixed" => {
+            "The tested version of a batch is frozen; open a new batch for another version."
+        }
+        "run_date_fixed" => {
+            "The execution date of a batch is frozen; open a new batch for another day."
+        }
+        "test_case_ids_missing" => "Name at least one case to add to the batch.",
+        "case_not_in_project" => "Add a case of the same project: run `pbot tc ls -p <project>`.",
+        _ => return None,
+    };
+    Some(hint)
 }
 
 /// True when the error of the server carries the stable code `code`.
@@ -630,5 +663,40 @@ mod tests {
         let err = map_testcase_error(400, body);
         let hint = err.hint().expect("a hint");
         assert!(hint.contains("--evidence"), "{hint}");
+    }
+
+    #[test]
+    fn the_reason_of_a_refusal_wins_over_the_code_that_wraps_it() {
+        // The shape the live instance answers a second conclusion with:
+        // the reason is in the list, and the code of the refusal wraps
+        // it. The remedy of the reason is the one the caller can act on.
+        let body = r#"{"error":"The payload is not valid.","code":"invalid_payload","errors":[
+            {"code":"conclusion_is_final","message":"结论一经写入不再修改，请作废该记录后在新批次中重测。","path":"cases[TC-CLI-001].conclusion","field":"conclusion","case_number":"TC-CLI-001","step_sequence":null}]}"#;
+        let err = map_testcase_error(400, body);
+        let hint = err.hint().expect("a hint");
+        assert!(hint.contains("written once"), "{hint}");
+        assert!(
+            !hint.contains("Check the payload"),
+            "the wrapper must not hide the remedy of the reason: {hint}"
+        );
+    }
+
+    #[test]
+    fn a_wrapper_whose_reason_has_no_remedy_keeps_the_remedy_of_the_wrapper() {
+        // The reason is unknown to the table: the wrapper answers.
+        let body = r#"{"error":"The payload is not valid.","code":"invalid_payload","errors":[
+            {"code":"a_reason_the_table_does_not_know","message":"…","field":"conclusion"}]}"#;
+        let err = map_testcase_error(400, body);
+        let hint = err.hint().expect("a hint");
+        assert!(hint.contains("Check the payload"), "{hint}");
+    }
+
+    #[test]
+    fn a_wrapper_without_a_reason_keeps_its_own_remedy() {
+        // Nothing to be more specific about: the wrapper answers.
+        let body = r#"{"error":"The payload is not valid.","code":"invalid_payload","errors":[]}"#;
+        let err = map_testcase_error(400, body);
+        let hint = err.hint().expect("a hint");
+        assert!(hint.contains("Check the payload"), "{hint}");
     }
 }

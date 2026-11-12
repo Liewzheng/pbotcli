@@ -13,6 +13,8 @@
 - [Documents](#documents)
 - [Comments](#comments)
 - [Intake](#intake)
+- [Test cases](#test-cases)
+- [Test runs](#test-runs)
 - [Users](#users)
 - [Cache](#cache)
 
@@ -409,6 +411,121 @@ use `decline` when the intent is only to reject the submission.
 
 `ls` returns an empty list when the project's intake view is off; `enabled` reports the same
 project flag (`intake_enabled`).
+
+## Test cases
+
+Command group: `pbot tc`
+
+```
+pbot tc ls -p PROJECT [--module CODE] [--priority P0|P1|P2|P3] [--issue ISSUE]
+                      [--status active|all] [--search TEXT] [--limit/-l N]
+pbot tc show CASE -p PROJECT
+pbot tc create -p PROJECT --module CODE --title TEXT --purpose TEXT --object-overview TEXT
+                     --priority P0|P1|P2|P3 --precondition TEXT --environment TEXT
+                     [--related-feature TEXT] [--remarks TEXT] [--status active|void]
+                     [--step "ACTION | EXPECTED"]... [--steps-file PATH]
+pbot tc update CASE -p PROJECT [--title TEXT] [--purpose TEXT] [--object-overview TEXT]
+                     [--priority P] [--precondition TEXT] [--environment TEXT]
+                     [--related-feature TEXT] [--remarks TEXT] [--status active|void]
+                     [--step "ACTION | EXPECTED"]... [--steps-file PATH]
+pbot tc steps CASE -p PROJECT [--step "ACTION | EXPECTED"]... [--steps-file PATH]
+pbot tc issues CASE -p PROJECT [--add/-a ISSUE] [--remove/-r ISSUE]
+pbot tc delete CASE -p PROJECT
+pbot tc module ls -p PROJECT
+pbot tc module create -p PROJECT --code CODE [--description/-d TEXT]
+```
+
+| Parameter | Description |
+|---|---|
+| `CASE` | Case number (`TC-CLI-001`), UUID, or title |
+| `--module` / `--code` | Module code of the case — the prefix of its number. Registered first with `tc module create` |
+| `--title`, `--purpose`, `--object-overview`, `--priority`, `--precondition`, `--environment` | The six header fields the **server** refuses a case without. `--preconditions` and `--env` are aliases of `--precondition` and `--environment` |
+| `--step "ACTION \| EXPECTED"` | One step, written as `action | expected result`. Both halves are required |
+| `--steps-file` | The whole step table: a JSON array `[{"action": "…", "expected": "…"}]`, or one `action | expected result` per line (`#` lines and blank lines are skipped) |
+| `--priority` | `P0`, `P1`, `P2`, `P3` |
+| `--status` | `active` (the default) or `void` |
+| `--issue`, `--add`, `--remove` | The work-item links of the case (`--add` and `--remove` are mutually exclusive; without either the links are listed) |
+| `--limit` / `-l` | Maximum results (default 50) |
+
+The server assigns the number of a case — the CLI never builds one. `tc module create` is refused
+by the server when the code is not 2 to 6 uppercase letters or is already taken; the refusal
+carries the server's code (`module_code_format`, `module_code_taken`).
+
+`tc update` refuses `--module` and `--number` locally (exit 5): the number is bound to the module
+and the server keeps both.
+
+`tc steps` **prints the step rows, not the case number** — a `Step` / `Action` / `Expected result`
+table on stderr, the same rows as a JSON array on stdout. The number of the case is what
+`tc show` prints. With `--step` / `--steps-file` the table is replaced **as a whole**: every step
+has to be passed again, the server drops the rows that are not in the list.
+
+`tc delete` is destructive and only a project admin may do it.
+
+## Test runs
+
+Command group: `pbot run`
+
+```
+pbot run ls -p PROJECT [--status draft|in_progress|completed|all] [--run-date YYYY-MM-DD] [--limit/-l N]
+pbot run show RUN -p PROJECT
+pbot run create -p PROJECT --version TEXT --build TEXT --commit TEXT --environment TEXT
+                       [--run-date YYYY-MM-DD] [--retest-of RUN] [--executed-by WHO]
+pbot run add RUN CASE... -p PROJECT
+pbot run step RUN --case CASE --step N --verdict pass|fail|unset
+                  [--actual MARKDOWN] [--actual-file PATH] [--image PATH] [--yes/-y]
+pbot run conclude RUN --case CASE --conclusion PASS|FAIL|N/A|MANUAL
+                      [--evidence MARKDOWN] [--evidence-file PATH] [--image PATH]
+                      [--remarks TEXT] [--actual-result-summary TEXT]
+                      [--na-reason TEXT] [--na-criteria-source TEXT]
+                      [--manual-executor WHO] [--manual-condition TEXT] [--yes/-y]
+pbot run remove RUN --case CASE -p PROJECT
+pbot run finalize RUN -p PROJECT
+pbot run summary RUN -p PROJECT
+```
+
+| Parameter | Description |
+|---|---|
+| `RUN` | Batch number (`RUN-20261109-01`) or UUID |
+| `--case` | The case of the batch (`TC-CLI-007`) |
+| `--step` | The number of the step in the case (1, 2, 3 …) |
+| `--verdict` | `pass`, `fail` or `unset` — a step that was not executed is `unset`. `N/A` is a conclusion of a case, not a verdict of a step |
+| `--conclusion` | `PASS`, `FAIL`, `N/A` or `MANUAL` (`NA` is normalized to `N/A`) |
+| `--actual`, `--actual-file` | The measured value of a step. **Pass-through**: it reaches the server as it was typed, byte for byte — no Markdown conversion |
+| `--evidence`, `--evidence-file` | The evidence of a case. Same pass-through rule |
+| `--image` | A screenshot. On `run step` it belongs to the step; on `run conclude` it is the evidence of the case |
+| `--yes` / `-y` | Confirm the write. Needed when the command is not on a terminal — otherwise the command asks, and refuses (exit 5) without a terminal |
+| `--version`, `--build`, `--commit`, `--environment` | The tested build of the batch. Frozen once the batch is created |
+| `--run-date` | The day of the execution. **UTC**, and frozen after the creation. On `run ls` it filters the batches of that day |
+| `--retest-of` | The batch this one re-tests. A re-test runs in the project of its original and never in a ring |
+| `--executed-by` | Who executed the batch: `me` (the default), a name, or a UUID |
+| `--na-reason`, `--na-criteria-source` | Required by the server for a `N/A` case |
+| `--manual-executor`, `--manual-condition` | Required by the server for a `MANUAL` case |
+| `--actual-result-summary` | The one-line phenomenon of the case (the summary shows it) |
+| `--status` (of `run ls`) | `draft`, `in_progress`, `completed`, or `all` |
+
+Two rules shape the whole group: a verdict and a conclusion are written **once** — the server
+refuses a second write with `conclusion_is_final`, and **no flag overwrites a verdict** — and a
+**completed** batch is **frozen**, so every later write to it is refused with `run_completed`. A
+wrong verdict is corrected by voiding the record and running the case again in a new batch
+(`pbot run create --retest-of <run>`).
+
+**The order decides the code.** A second conclusion write on an **open** batch is refused with
+`conclusion_is_final`; the same write **after** the finalize is refused with `run_completed`,
+because the freeze of a completed batch is checked first.
+
+**The evidence hangs on the case, not on the step.** The server counts case-level evidence only:
+a case-level text (`--evidence` / `--evidence-file`) **or** a case-level file (`--image`). A
+screenshot of a **step** does not count — the finalize answers `evidence_missing` with the path
+`cases[TC-CLI-001].evidence` and names the case.
+
+`--run-date` defaults to **today in UTC**: an operator at UTC+8 who creates a batch between 00:00
+and 08:00 local time gets the previous UTC day in `run_date`, and the number of the batch carries
+that day. The four counts of `run summary` are **not a partition** of the total — a case that
+failed on one step and was never executed on another is counted twice, so `fail` and `manual` may
+count the same case.
+
+The listing shows the re-test link in the `Retest of` column as `retest of RUN-20261109-01` —
+English, unlike the web UI.
 
 ## Users
 
