@@ -1247,6 +1247,10 @@ pbot run show <run> -p <project> [--json]
 
 `<run>` is the number (`RUN-20261109-01`) or a UUID.
 
+A batch the server answers with a `null` for — no executor, a case whose test case was deleted —
+still reads: the `null` is the empty string, the shape every other absent field of a record
+carries.
+
 ### pbot run create
 
 Create a batch. The number is assigned by the server.
@@ -1275,8 +1279,10 @@ close a batch that does not carry them, and this group has no command that fills
 
 **`--executed-by` defaults to `me`**, which under a service-principal token resolves to the
 principal's shadow bot member — the same `me` the rest of the CLI uses. The batch needs an
-executor: a batch without one cannot be closed, and the server refuses the finalize with
-`run_executed_by_missing`.
+executor: a batch without one cannot be closed. The server refuses such a finalize with
+`run_executed_by_missing`, and the CLI refuses it **before** the request (exit 5) with the same
+remedy — so the reason code of the server is the one a caller reading the API sees, not the one
+the CLI prints.
 
 **`--run-date` is UTC, and it is frozen after the creation.** The default is *today in UTC*, not
 today where the operator sits: an operator at UTC+8 who creates a batch between 00:00 and 08:00

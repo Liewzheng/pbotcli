@@ -31,6 +31,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `run_completed`, `module_code_format`, …) next to the sentence of the server, so a script can
   tell a validation failure (exit 5) from a permission failure (exit 2) or a transport failure
   (exit 4) without reading prose.
+- A refused write now shows the remedy of the **reason** it was refused for, not the one of the
+  code that wraps it: a second conclusion is refused with `invalid_payload` around
+  `conclusion_is_final`, and the hint now says that a conclusion is written once and that there
+  is no flag that overwrites it.
+
+### Fixed
+- A batch the server answers with a `null` for — no executor, a case record whose test case was
+  deleted — no longer refuses the whole document: `run ls` and `run show` read it, and the JSON
+  carries the empty string for the field, the shape every other absent field of a record has. The
+  `--json` contract of the two commands does not change.
 
 ### Documentation
 - The README and the agent skill gained a **Test cases** section with the end-to-end flow —

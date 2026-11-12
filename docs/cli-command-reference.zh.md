@@ -1180,6 +1180,9 @@ pbot run show <run> -p <project> [--json]
 
 `<run>` 可以是编号（`RUN-20261109-01`）或 UUID。
 
+服务端对某些字段回 `null` 的批次（没有执行人、用例已删除的记录）照样能读：`null` 读成空字符串，
+和记录里其他缺失字段的形状一样。
+
 ### pbot run create
 
 创建批次。编号由服务端分配。
@@ -1207,8 +1210,10 @@ pbot run create -p <project> --version <version> --build <build> --commit <commi
 字段的批次，而本组没有命令可以事后补上。
 
 **`--executed-by` 默认是 `me`**；在服务主体令牌下，`me` 解析到该主体的影子 bot 成员——和 CLI
-其他地方用的是同一个 `me`。批次需要执行人：没有执行人的批次关不掉，服务端会用
-`run_executed_by_missing` 拒绝 finalize。
+其他地方用的是同一个 `me`。批次需要执行人：没有执行人的批次关不掉。服务端会用
+`run_executed_by_missing` 拒绝这样的 finalize，而 CLI 在**发请求之前**就以同样的补救说明本地
+拒绝（退出码 5）——所以 `run_executed_by_missing` 是直接读 API 的调用方看到的原因码，不是 CLI
+打印的那一个。
 
 **`--run-date` 是 UTC，而且创建之后就冻结。** 默认值是 *UTC 的今天*，不是操作者所在时区的今天：
 UTC+8 的操作者在当地 00:00 到 08:00 之间创建批次，`run_date` 拿到的是**前一个 UTC 日**，批次

@@ -25,6 +25,27 @@ use serde::{Deserialize, Serialize};
 
 use crate::Member;
 
+/// A field the server may answer with `null`.
+///
+/// The server sends an explicit `null` for a field it has no value for —
+/// the executor of a batch that was created without one, the test case of
+/// a record whose case was deleted — and a plain `String` refuses it:
+/// `#[serde(default)]` covers a **missing** key, not a `null` value, so
+/// the whole document was refused with `invalid type: null, expected a
+/// string` and every read of the feature died with it.
+///
+/// The value of the field is the **empty string** here, the same shape
+/// every other absent field of a record carries — so the JSON the CLI
+/// prints does not change, and a batch without an executor still prints
+/// an empty executor rather than a `null` that a caller would have to
+/// test for.
+fn null_to_empty<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 /// The conclusions a case record of a batch may carry.
 ///
 /// The server stores them uppercased (`validate_conclusion` of the
@@ -57,7 +78,11 @@ pub struct TestRun {
     #[serde(default)]
     pub environment: String,
     /// The uuid of the user that executed the batch.
-    #[serde(default)]
+    ///
+    /// The server answers `null` for a batch that was created without an
+    /// executor, so the field tolerates a `null` and reads it as the
+    /// empty string.
+    #[serde(default, deserialize_with = "null_to_empty")]
     pub executed_by: String,
     /// The name of that user — the snapshot the server keeps next to
     /// the id, so the history of the batch survives the deletion of the
@@ -142,7 +167,12 @@ pub struct TestRunFilters {
 pub struct TestRunCase {
     pub id: String,
     /// The uuid of the test case this record was made of.
-    #[serde(default)]
+    ///
+    /// The server answers `null` for a record whose test case was
+    /// deleted, so the field tolerates a `null` and reads it as the empty
+    /// string — the same shape the other absent fields of the record
+    /// carry.
+    #[serde(default, deserialize_with = "null_to_empty")]
     pub test_case: String,
     #[serde(default)]
     pub case_number: String,
@@ -363,6 +393,25 @@ mod tests {
         assert_eq!(run.number, "");
         assert_eq!(run.retest_of, None);
         assert_eq!(run.retest_of_number, None);
+    }
+
+    #[test]
+    fn reads_a_batch_whose_executor_the_server_answers_with_null() {
+        // The shape of the live instance: a batch created without an
+        // executor carries an explicit `null`, and `#[serde(default)]`
+        // does not cover a `null` value — only a missing key.
+        let raw = r#"{
+            "id": "r1",
+            "number": "RUN-20261110-08",
+            "executed_by": null,
+            "executed_by_name": "",
+            "cases": [{"id": "rc1", "test_case": null, "case_number": "TC-PWR-001"}]
+        }"#;
+        let run: TestRun = serde_json::from_str(raw).expect("a null must not refuse the record");
+        assert_eq!(run.executed_by, "");
+        assert_eq!(run.executed_by_name, "");
+        assert_eq!(run.cases[0].test_case, "");
+        assert_eq!(run.cases[0].case_number, "TC-PWR-001");
     }
 
     #[test]

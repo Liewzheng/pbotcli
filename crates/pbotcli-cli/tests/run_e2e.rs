@@ -1395,3 +1395,91 @@ fn run_create_with_a_retest_of_sends_the_original_batch() {
     assert!(out.status.success(), "stderr: {}", stderr_of(&out));
     create.assert();
 }
+
+/// The batches of the project as the live instance hands them out: one
+/// batch carries no executor and one case record carries no test case, and
+/// the server sends an explicit `null` for both.
+///
+/// A `null` is not a missing key, so `#[serde(default)]` does not cover
+/// it — the record has to read it.
+const RUN_LIST_WITH_NULLS: &str = r#"{"results":[{"id":"r1","number":"RUN-20261110-08","run_date":"2026-11-10","version_number":"1.2.2","build_number":"41","commit_hash":"def5678","environment":"bench","executed_by":null,"executed_by_name":"","status":"in_progress","retest_of":null,"retest_of_number":null,"cases":[],"created_at":"2026-11-10T08:29:37Z","updated_at":"2026-11-10T08:29:37Z"},{"id":"r2","number":"RUN-20261110-11","run_date":"2026-11-10","version_number":"1.2.2","build_number":"41","commit_hash":"def5678","environment":"bench","executed_by":"u1","executed_by_name":"Bot","status":"in_progress","retest_of":null,"retest_of_number":null,"cases":[{"id":"rc1","test_case":null,"case_number":"TC-PWR-001","case_module_code":"PWR","case_title":"A deleted case","case_purpose":"","case_object_overview":"","case_priority":"P1","case_preconditions":"","case_environment":"","conclusion":"","evidence":"","remarks":"","actual_result_summary":"","na_reason":"","na_criteria_source":"","manual_executor":"","manual_condition":"","steps":[],"attachments":[],"created_at":"2026-11-10T08:29:37Z","updated_at":"2026-11-10T08:29:37Z"}],"created_at":"2026-11-10T08:29:37Z","updated_at":"2026-11-10T08:29:37Z"}],"next_cursor":null,"next_page_results":false}"#;
+
+/// One batch as the detail endpoint hands it out: the case record of a
+/// deleted test case carries an explicit `null`.
+const RUN_DETAIL_WITH_NULL_CASE: &str = r#"{"id":"r2","number":"RUN-20261110-11","run_date":"2026-11-10","version_number":"1.2.2","build_number":"41","commit_hash":"def5678","environment":"bench","executed_by":"u1","executed_by_name":"Bot","status":"in_progress","retest_of":null,"retest_of_number":null,"cases":[{"id":"rc1","test_case":null,"case_number":"TC-PWR-001","case_module_code":"PWR","case_title":"A deleted case","case_purpose":"","case_object_overview":"","case_priority":"P1","case_preconditions":"","case_environment":"","conclusion":"","evidence":"","remarks":"","actual_result_summary":"","na_reason":"","na_criteria_source":"","manual_executor":"","manual_condition":"","steps":[],"attachments":[],"created_at":"2026-11-10T08:29:37Z","updated_at":"2026-11-10T08:29:37Z"}],"created_at":"2026-11-10T08:29:37Z","updated_at":"2026-11-10T08:29:37Z"}"#;
+
+/// The reads of the project, with the list of the batches carrying the
+/// nulls of the live instance.
+fn mock_run_reads_with_nulls(server: &mut Server) {
+    server
+        .mock("GET", "/api/v1/workspaces/ws/projects/")
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(PROJECTS)
+        .create();
+    server
+        .mock("GET", "/api/v1/users/me/")
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(ME)
+        .create();
+    server
+        .mock("GET", "/api/v1/workspaces/ws/projects/p1/test-runs/")
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(RUN_LIST_WITH_NULLS)
+        .create();
+}
+
+#[test]
+fn run_ls_reads_a_batch_whose_executor_the_server_answers_with_null() {
+    let mut server = Server::new();
+    mock_run_reads_with_nulls(&mut server);
+
+    let out = run(
+        &["run", "ls", "-p", "Demo", "--json", "--no-cache"],
+        &server.url(),
+    );
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let parsed: serde_json::Value = serde_json::from_str(&stdout_of(&out)).expect("valid JSON");
+    assert_eq!(parsed[0]["number"], "RUN-20261110-08");
+    // The null reads as the empty string — the shape every other absent
+    // field of a record carries, so the contract of the view does not
+    // change.
+    assert_eq!(parsed[0]["executed_by"], "");
+    assert_eq!(parsed[0]["executed_by_name"], "");
+}
+
+#[test]
+fn run_show_reads_a_case_record_whose_test_case_the_server_answers_with_null() {
+    let mut server = Server::new();
+    mock_run_reads_with_nulls(&mut server);
+    server
+        .mock("GET", "/api/v1/workspaces/ws/projects/p1/test-runs/r2/")
+        .match_query(Matcher::Any)
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(RUN_DETAIL_WITH_NULL_CASE)
+        .create();
+
+    let out = run(
+        &[
+            "run",
+            "show",
+            "RUN-20261110-11",
+            "-p",
+            "Demo",
+            "--json",
+            "--no-cache",
+        ],
+        &server.url(),
+    );
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+    let parsed: serde_json::Value = serde_json::from_str(&stdout_of(&out)).expect("valid JSON");
+    assert_eq!(parsed["number"], "RUN-20261110-11");
+    assert_eq!(parsed["cases"][0]["case_number"], "TC-PWR-001");
+    assert_eq!(parsed["cases"][0]["test_case"], "");
+}
