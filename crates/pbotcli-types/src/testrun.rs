@@ -39,6 +39,10 @@ use crate::Member;
 /// prints does not change, and a batch without an executor still prints
 /// an empty executor rather than a `null` that a caller would have to
 /// test for.
+///
+/// Only the `null` is tolerated: a number, an object or an array where
+/// the field is a string is still refused, so the field cannot drift
+/// away from the string it is without the client noticing.
 fn null_to_empty<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: serde::Deserializer<'de>,

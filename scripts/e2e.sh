@@ -33,6 +33,14 @@ say()  { printf '\n== %s\n' "$*"; }
 ok()   { printf '   ok: %s\n' "$*"; }
 skip() { printf '   skip: %s\n' "$*"; }
 die()  { printf '   FAIL: %s\n' "$*" >&2; FAILURES=$((FAILURES + 1)); }
+# The summary of the run, and the exit code that goes with it.
+result() {
+  say "result"
+  if [[ "$FAILURES" -eq 0 ]]; then echo "E2E PASS"; else echo "E2E FAIL ($FAILURES)"; exit 1; fi
+}
+# A failure that makes the rest of the run meaningless: the run ends
+# there, with the summary — and with the cleanup, which is a trap.
+fatal() { die "$*"; result; }
 
 cleanup() {
   say "cleanup $MARK"
@@ -95,7 +103,8 @@ $PBOT wi update "$id" -p "$PROJECT" -i "$inline_png" --json >/dev/null 2>&1 \
   && ok "inline img" || die "inline img"
 html="$($PBOT wi show "$id" --no-comments --no-cache --json 2>/dev/null | jq -r .description_html)"
 grep -q '<img ' <<<"$html" && ok "inline img in the description" || die "inline img"
-rm -f "$png" "$inline_png"
+# The files stay until the end of the run: the test-case block copies the
+# same image, and the cleanup removes the whole directory anyway.
 
 say "verify attachment uploaded"
 sleep "$PAUSE"
@@ -145,7 +154,7 @@ elif [[ $probe_rc -ne 0 ]]; then
   die "tc module ls (exit $probe_rc): ${probe_out%%$'\n'*}"
 else
   png="$TMP_DIR/tc.png"
-  python3 -c "import base64,sys;open(sys.argv[1],'wb').write(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='))" "$png"
+  cp "$TMP_DIR/shot.png" "$png"
 
   sleep "$PAUSE"
   if out="$($PBOT tc module create -p "$PROJECT" --code "$MODULE_CODE" \
@@ -173,7 +182,9 @@ else
   if [[ -n "$case_number" ]]; then
     ok "case $case_number"
   else
-    die "tc create: $(head -n 1 "$ERR_FILE")"
+    # Every step below needs the case: the run ends here instead of
+    # reporting a dozen failures that all come from this one.
+    fatal "tc create: $(head -n 1 "$ERR_FILE")"
   fi
 
   sleep "$PAUSE"
@@ -188,7 +199,7 @@ else
   if [[ -n "$run_uuid" ]]; then
     ok "batch $run_number"
   else
-    die "run create: $(head -n 1 "$ERR_FILE")"
+    fatal "run create: $(head -n 1 "$ERR_FILE")"
   fi
 
   sleep "$PAUSE"
@@ -254,10 +265,8 @@ else
     die "a write into the completed batch (exit $frozen_rc)"
   fi
 
-  rm -f "$png"
   printf '   note: the case %s and the batch %s stay in the project —\n' "$case_number" "$run_number"
   printf '         the test-case feature has no delete for a member of the project.\n'
 fi
 
-say "result"
-if [[ "$FAILURES" -eq 0 ]]; then echo "E2E PASS"; else echo "E2E FAIL ($FAILURES)"; exit 1; fi
+result

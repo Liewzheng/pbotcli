@@ -1396,17 +1396,38 @@ fn run_create_with_a_retest_of_sends_the_original_batch() {
     create.assert();
 }
 
+/// The case record of a batch whose test case was deleted: the server
+/// sends an explicit `null` for the uuid it no longer holds.
+const CASE_RECORD_WITH_A_NULL_TEST_CASE: &str = r#"{"id":"rc1","test_case":null,"case_number":"TC-PWR-001","case_module_code":"PWR","case_title":"A deleted case","case_purpose":"","case_object_overview":"","case_priority":"P1","case_preconditions":"","case_environment":"","conclusion":"","evidence":"","remarks":"","actual_result_summary":"","na_reason":"","na_criteria_source":"","manual_executor":"","manual_condition":"","steps":[],"attachments":[],"created_at":"2026-11-10T08:29:37Z","updated_at":"2026-11-10T08:29:37Z"}"#;
+
 /// The batches of the project as the live instance hands them out: one
 /// batch carries no executor and one case record carries no test case, and
 /// the server sends an explicit `null` for both.
 ///
 /// A `null` is not a missing key, so `#[serde(default)]` does not cover
 /// it — the record has to read it.
-const RUN_LIST_WITH_NULLS: &str = r#"{"results":[{"id":"r1","number":"RUN-20261110-08","run_date":"2026-11-10","version_number":"1.2.2","build_number":"41","commit_hash":"def5678","environment":"bench","executed_by":null,"executed_by_name":"","status":"in_progress","retest_of":null,"retest_of_number":null,"cases":[],"created_at":"2026-11-10T08:29:37Z","updated_at":"2026-11-10T08:29:37Z"},{"id":"r2","number":"RUN-20261110-11","run_date":"2026-11-10","version_number":"1.2.2","build_number":"41","commit_hash":"def5678","environment":"bench","executed_by":"u1","executed_by_name":"Bot","status":"in_progress","retest_of":null,"retest_of_number":null,"cases":[{"id":"rc1","test_case":null,"case_number":"TC-PWR-001","case_module_code":"PWR","case_title":"A deleted case","case_purpose":"","case_object_overview":"","case_priority":"P1","case_preconditions":"","case_environment":"","conclusion":"","evidence":"","remarks":"","actual_result_summary":"","na_reason":"","na_criteria_source":"","manual_executor":"","manual_condition":"","steps":[],"attachments":[],"created_at":"2026-11-10T08:29:37Z","updated_at":"2026-11-10T08:29:37Z"}],"created_at":"2026-11-10T08:29:37Z","updated_at":"2026-11-10T08:29:37Z"}],"next_cursor":null,"next_page_results":false}"#;
+const RUN_LIST_WITH_NULLS_TEMPLATE: &str = r#"{"results":[{"id":"r1","number":"RUN-20261110-08","run_date":"2026-11-10","version_number":"1.2.2","build_number":"41","commit_hash":"def5678","environment":"bench","executed_by":null,"executed_by_name":"","status":"in_progress","retest_of":null,"retest_of_number":null,"cases":[],"created_at":"2026-11-10T08:29:37Z","updated_at":"2026-11-10T08:29:37Z"},{"id":"r2","number":"RUN-20261110-11","run_date":"2026-11-10","version_number":"1.2.2","build_number":"41","commit_hash":"def5678","environment":"bench","executed_by":"u1","executed_by_name":"Bot","status":"in_progress","retest_of":null,"retest_of_number":null,"cases":[CASE_RECORD_WITH_A_NULL_TEST_CASE],"created_at":"2026-11-10T08:29:37Z","updated_at":"2026-11-10T08:29:37Z"}],"next_cursor":null,"next_page_results":false}"#;
 
 /// One batch as the detail endpoint hands it out: the case record of a
 /// deleted test case carries an explicit `null`.
-const RUN_DETAIL_WITH_NULL_CASE: &str = r#"{"id":"r2","number":"RUN-20261110-11","run_date":"2026-11-10","version_number":"1.2.2","build_number":"41","commit_hash":"def5678","environment":"bench","executed_by":"u1","executed_by_name":"Bot","status":"in_progress","retest_of":null,"retest_of_number":null,"cases":[{"id":"rc1","test_case":null,"case_number":"TC-PWR-001","case_module_code":"PWR","case_title":"A deleted case","case_purpose":"","case_object_overview":"","case_priority":"P1","case_preconditions":"","case_environment":"","conclusion":"","evidence":"","remarks":"","actual_result_summary":"","na_reason":"","na_criteria_source":"","manual_executor":"","manual_condition":"","steps":[],"attachments":[],"created_at":"2026-11-10T08:29:37Z","updated_at":"2026-11-10T08:29:37Z"}],"created_at":"2026-11-10T08:29:37Z","updated_at":"2026-11-10T08:29:37Z"}"#;
+const RUN_DETAIL_WITH_NULL_CASE_TEMPLATE: &str = r#"{"id":"r2","number":"RUN-20261110-11","run_date":"2026-11-10","version_number":"1.2.2","build_number":"41","commit_hash":"def5678","environment":"bench","executed_by":"u1","executed_by_name":"Bot","status":"in_progress","retest_of":null,"retest_of_number":null,"cases":[CASE_RECORD_WITH_A_NULL_TEST_CASE],"created_at":"2026-11-10T08:29:37Z","updated_at":"2026-11-10T08:29:37Z"}"#;
+
+/// The list of the batches, with the case record of the shared fixture
+/// put in.
+fn run_list_with_nulls() -> String {
+    RUN_LIST_WITH_NULLS_TEMPLATE.replace(
+        "CASE_RECORD_WITH_A_NULL_TEST_CASE",
+        CASE_RECORD_WITH_A_NULL_TEST_CASE,
+    )
+}
+
+/// One batch, with the case record of the shared fixture put in.
+fn run_detail_with_null_case() -> String {
+    RUN_DETAIL_WITH_NULL_CASE_TEMPLATE.replace(
+        "CASE_RECORD_WITH_A_NULL_TEST_CASE",
+        CASE_RECORD_WITH_A_NULL_TEST_CASE,
+    )
+}
 
 /// The reads of the project, with the list of the batches carrying the
 /// nulls of the live instance.
@@ -1430,7 +1451,7 @@ fn mock_run_reads_with_nulls(server: &mut Server) {
         .match_query(Matcher::Any)
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(RUN_LIST_WITH_NULLS)
+        .with_body(run_list_with_nulls())
         .create();
 }
 
@@ -1462,7 +1483,7 @@ fn run_show_reads_a_case_record_whose_test_case_the_server_answers_with_null() {
         .match_query(Matcher::Any)
         .with_status(200)
         .with_header("content-type", "application/json")
-        .with_body(RUN_DETAIL_WITH_NULL_CASE)
+        .with_body(run_detail_with_null_case())
         .create();
 
     let out = run(
