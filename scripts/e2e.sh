@@ -17,6 +17,10 @@ FAILURES=0
 # The scratch file holds the error of the last command, so a failure says
 # why it failed instead of only naming the step.
 ERR_FILE="$(mktemp)"
+# The generated images live in a directory of their own: the name of the
+# file has to end in .png (the CLI reads the type of an image from its
+# extension), and a predictable path in a shared /tmp is not worth the risk.
+TMP_DIR="$(mktemp -d "/tmp/${MARK}-XXXXXX")"
 
 say()  { printf '\n== %s\n' "$*"; }
 ok()   { printf '   ok: %s\n' "$*"; }
@@ -32,6 +36,7 @@ cleanup() {
         sleep "$PAUSE"
       done
   rm -f "$ERR_FILE"
+  rm -rf "$TMP_DIR"
 }
 trap cleanup EXIT
 
@@ -69,7 +74,7 @@ st="$($PBOT wi show "$id" --no-comments --no-cache --json 2>/dev/null | jq -r .s
 [[ "$st" == "In Progress" ]] && ok "state=$st" || die "state=$st"
 
 say "attachment upload"
-png="/tmp/$MARK.png"
+png="$TMP_DIR/shot.png"
 python3 -c "import base64,sys;open(sys.argv[1],'wb').write(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='))" "$png"
 sleep "$PAUSE"
 $PBOT attachment attach "$id" -f "$png" -p "$PROJECT" --json >/dev/null 2>&1 && ok "attach" || die "attach"
@@ -78,7 +83,7 @@ say "inline image (-i) on update"
 sleep "$PAUSE"
 # A file of its own name: the CLI refuses a duplicate attachment name on
 # purpose, and this step is not about that refusal.
-inline_png="/tmp/$MARK-inline.png"
+inline_png="$TMP_DIR/inline.png"
 python3 -c "import base64,sys;open(sys.argv[1],'wb').write(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='))" "$inline_png"
 $PBOT wi update "$id" -p "$PROJECT" -i "$inline_png" --json >/dev/null 2>&1 \
   && ok "inline img" || die "inline img"
@@ -103,9 +108,11 @@ up="$($PBOT attachment ls "$id" -p "$PROJECT" --no-cache --json 2>/dev/null | jq
 #
 # The module code is 2 to 6 UPPERCASE letters, so the pid and a random number
 # are spelled out in letters: two smoke runs never fight over the same code.
-# The sum is taken modulo 26^4, so the code never grows past four letters
-# (plus the E), and the padding keeps it away from the two-letter end of the
-# rule whatever the pid of the run is.
+# The sum is taken modulo 26^4 (456976), so the code never grows past four
+# letters (plus the E), and the padding keeps it away from the two-letter
+# end of the rule whatever the pid of the run is. The number is written out
+# rather than computed with `**`: the script has to run on the bash 3.2
+# that macOS ships.
 letters_of() {
   local n=$1 out="" alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZ"
   while [[ $n -gt 0 && ${#out} -lt 4 ]]; do
@@ -114,7 +121,7 @@ letters_of() {
   done
   printf '%s' "${out:-A}"
 }
-seed_letters="$(letters_of $(( ($$ + RANDOM) % (26 ** 4) )))"
+seed_letters="$(letters_of $(( ($$ + RANDOM) % 456976 )))"
 while [[ ${#seed_letters} -lt 3 ]]; do seed_letters="A$seed_letters"; done
 MODULE_CODE="E$seed_letters"
 # The version under test is the version of the binary under test.
@@ -131,7 +138,7 @@ elif [[ $probe_rc -ne 0 ]]; then
   # must not pass as "the feature is not deployed here".
   die "tc module ls (exit $probe_rc): ${probe_out%%$'\n'*}"
 else
-  png="/tmp/$MARK-tc.png"
+  png="$TMP_DIR/tc.png"
   python3 -c "import base64,sys;open(sys.argv[1],'wb').write(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='))" "$png"
 
   sleep "$PAUSE"
@@ -166,10 +173,12 @@ else
   sleep "$PAUSE"
   run_json="$($PBOT run create -p "$PROJECT" --version "$PBOT_VERSION" --build "$MARK" \
     --commit 0000000 --env "pbot e2e" --executed-by me --json 2>"$ERR_FILE" || true)"
-  # One jq for the two values of the answer.
-  mapfile -t run_fields < <(jq -r '(.id // ""), (.number // "")' <<<"$run_json")
-  run_uuid="${run_fields[0]:-}"
-  run_number="${run_fields[1]:-}"
+  # One jq for the two values of the answer. The split is done with the
+  # shell and not with `mapfile`: the script has to run on the bash 3.2
+  # that macOS ships.
+  run_fields="$(jq -r '[(.id // ""), (.number // "")] | join(" ")' <<<"$run_json")"
+  run_uuid="${run_fields%% *}"
+  run_number="${run_fields##* }"
   if [[ -n "$run_uuid" ]]; then
     ok "batch $run_number"
   else

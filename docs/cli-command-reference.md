@@ -54,9 +54,8 @@ Configuration is discovered from several files, highest priority first: `~/.conf
 | 4 | API error — every other status the server answers (400, 403, 409, 429, 5xx) — and every transport failure |
 | 5 | Validation error the CLI raised itself (client-side) |
 
-**The test-case feature (`tc`, `run`) has its own mapping** — a permission failure and a coded
-refusal are two classes of their own there. The table at the end of this section has the split;
-the table above is the one every other command follows.
+This is the table **every command but `tc` and `run` follows**; those two groups have a mapping
+of their own, and the table at the end of this section has the split.
 
 Two details worth knowing before a script keys on these:
 
@@ -64,7 +63,10 @@ Two details worth knowing before a script keys on these:
   unknown flag, or a subcommand that needs an argument is refused by clap before any request is
   made; the message and the usage line go to **stderr**, so stdout stays clean (`--json 2>/dev/null`
   yields nothing, not a broken document). Code 2 therefore means "the CLI or the credential could
-  not get that far" — it does not distinguish a wrong password from a wrong flag.
+  not get that far" — it does not distinguish a wrong password from a wrong flag. **The three
+  classes are told apart by their message, not by the code**: a usage error prints the usage line,
+  an authentication failure prints `Authentication failed`, and a permission failure prints the
+  server's own remedy.
 - **A permission failure is exit 4 on most commands, and exit 2 on the test-case feature.** The
   general mapping puts every status the server did not answer with 401 or 404 into the API class,
   so a 403 — a service principal without the grant on a project — exits 4. The test-case feature
@@ -75,7 +77,7 @@ Two details worth knowing before a script keys on these:
   code is still exit 5 there, because a conflict of this API is a refusal of the write rather than
   a transport failure.
 
-The classes of the test-case feature (`tc`, `run`) in one table:
+### The test-case feature (`tc`, `run`) has its own mapping
 
 | Class | Exit | Examples |
 |---|---|---|
