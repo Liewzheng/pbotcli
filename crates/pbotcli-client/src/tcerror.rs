@@ -197,6 +197,9 @@ fn codes_suffix(envelope: Option<&ErrorEnvelope>) -> String {
 
 /// The message of a refusal: the stable code, then one entry per problem
 /// with its place and the sentence the server shows for it.
+///
+/// The problems are listed one per line: a refusal that names a dozen of
+/// them is only readable when each of them has a line of its own.
 fn format_envelope(envelope: &ErrorEnvelope, status: u16) -> String {
     let mut parts = Vec::new();
     if let Some(code) = envelope.code.as_deref().filter(|c| !c.is_empty()) {
@@ -220,7 +223,7 @@ fn format_envelope(envelope: &ErrorEnvelope, status: u16) -> String {
     if parts.is_empty() {
         return format!("API error (HTTP {status})");
     }
-    parts.join(" | ")
+    parts.join("\n")
 }
 
 /// The next step to run, named by the stable code the server refused with.
@@ -243,15 +246,70 @@ fn hint_for(envelope: &ErrorEnvelope) -> String {
             "issue_link_exists" => "The work item is already linked to this test case.",
             "invalid_test_case" => "Fix the fields the server named and run the command again.",
             "invalid_payload" => "Check the payload the server refused and run the command again.",
-            "invalid_batch" => "Fix the batch the server refused and run the command again.",
+            "invalid_batch" => {
+                "Every reason above names the case and the step it belongs to; fix them and finalize again. The evidence of a case hangs on the case itself (--evidence/--evidence-file, or --image) — a screenshot of a step does not count."
+            }
             "conflict" => {
                 "The record changed in the meantime; read it again and re-apply your change."
+            }
+            // --- the codes of the batches ---------------------------------
+            "evidence_missing" => {
+                "The case needs evidence before the batch can be closed: pass --evidence/--evidence-file (or --image) to `pbot run conclude`. A screenshot of a step does not count — the evidence hangs on the case."
+            }
+            "conclusion_is_final" => {
+                "A conclusion and a verdict are written once; there is no flag that overwrites them. Void the record and run the case again in a new batch."
+            }
+            "run_completed" => {
+                "A completed batch is frozen. Open a new batch for the re-test: `pbot run create --retest-of <RUN>`."
+            }
+            "duplicate_case_number" => {
+                "The case is already in this batch. Read the batch (`pbot run show <RUN>`) before adding it again."
+            }
+            "run_case_removal_after_execution" => {
+                "The record already carries a verdict or a conclusion; re-run the case in a new batch instead of taking it out."
+            }
+            "retest_of_project_mismatch" => {
+                "A re-test runs in the project of its original; the batch named by --retest-of belongs to another project."
+            }
+            "retest_of_self" => "A batch cannot be a re-test of itself.",
+            "retest_of_cycle" => {
+                "The re-test link would close a ring; a batch may not re-test a batch that already re-tests it."
+            }
+            "run_executed_by_missing" => {
+                "The batch carries no executor; create the batch with `pbot run create --executed-by me`."
+            }
+            "run_version_fixed" => {
+                "The tested version of a batch is frozen; open a new batch for another version."
+            }
+            "run_date_fixed" => {
+                "The execution date of a batch is frozen; open a new batch for another day."
+            }
+            "test_case_ids_missing" => "Name at least one case to add to the batch.",
+            "case_not_in_project" => {
+                "Add a case of the same project: run `pbot tc ls -p <project>`."
             }
             _ => continue,
         };
         return hint.to_string();
     }
     "Fix what the server reported and run the command again.".to_string()
+}
+
+/// True when the error of the server carries the stable code `code`.
+///
+/// The typed error of the workspace carries the code of the refusal in
+/// its message: the mapper prints the code of the refusal on the first
+/// line and the code of every problem on a line of its own. A caller
+/// that has to act on one code reads it from there — this function is
+/// the one place that does, and it reads the **first word** of a line,
+/// where the mapper puts the code. A sentence that happens to mention a
+/// code is not a refusal of that code.
+pub fn carries_code(error: &PlaneError, code: &str) -> bool {
+    error.to_string().lines().any(|line| {
+        line.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .find(|token| !token.is_empty())
+            .is_some_and(|token| token == code)
+    })
 }
 
 /// Map a failure of the test-case feature onto the typed error of the
@@ -266,6 +324,8 @@ fn hint_for(envelope: &ErrorEnvelope) -> String {
 ///   can act on. A `409` and a `400` of the same code are the same class
 ///   of failure, so a duplicate that arrives as `409` reads like the
 ///   `400` of the same reason.
+/// * `409` **without** a code → `Validation` (exit 5) as well: a conflict
+///   of this API is a refusal of the write, not a transport failure.
 /// * everything else → `Api` (exit 4): the transport or the server failed.
 pub fn map_testcase_error(status: u16, body: &str) -> PlaneError {
     let envelope = parse_error_envelope(body);
@@ -484,5 +544,91 @@ mod tests {
         let err = map_testcase_error(400, body);
         let hint = err.hint().expect("a hint");
         assert!(hint.contains("2 to 6 uppercase letters"), "{hint}");
+    }
+
+    #[test]
+    fn every_problem_of_a_refusal_gets_a_line_of_its_own() {
+        let body = r#"{"error":"The batch is not valid.","code":"invalid_batch","errors":[
+            {"code":"evidence_missing","message":"缺少必填项：证据。","path":"cases[TC-CLI-007].evidence","field":"evidence","case_number":"TC-CLI-007","step_sequence":null},
+            {"code":"fail_without_actual_value","message":"失败的步骤必须有实测值。","path":"cases[TC-CLI-008].steps[3].actual_value","field":"actual_value","case_number":"TC-CLI-008","step_sequence":3}]}"#;
+        let err = map_testcase_error(400, body);
+        assert_eq!(err.exit_code(), pbotcli_core::errors::EXIT_VALIDATION);
+        let message = err.to_string();
+        let lines: Vec<&str> = message.lines().collect();
+        assert_eq!(lines.len(), 3, "{message}");
+        assert_eq!(lines[0], "invalid_batch");
+        assert!(lines[1].contains("evidence_missing"), "{message}");
+        assert!(lines[1].contains("case TC-CLI-007"), "{message}");
+        assert!(lines[2].contains("fail_without_actual_value"), "{message}");
+        // The step the problem belongs to is named with the case.
+        assert!(lines[2].contains("case TC-CLI-008, step 3"), "{message}");
+    }
+
+    #[test]
+    fn the_codes_of_the_batches_name_the_next_step() {
+        let body = r#"{"error":"The conclusion is final.","code":"conclusion_is_final","errors":[
+            {"code":"conclusion_is_final","message":"结论一经写进批次不再改。"}]}"#;
+        let err = map_testcase_error(400, body);
+        let hint = err.hint().expect("a hint");
+        assert!(hint.contains("new batch"), "{hint}");
+    }
+
+    #[test]
+    fn the_retest_codes_name_the_rule_they_refuse() {
+        for (code, needle) in [
+            ("retest_of_project_mismatch", "another project"),
+            ("retest_of_self", "of itself"),
+            ("retest_of_cycle", "ring"),
+        ] {
+            let body =
+                format!(r#"{{"code":"{code}","errors":[{{"code":"{code}","message":"..."}}]}}"#);
+            let err = map_testcase_error(400, &body);
+            let hint = err.hint().expect("a hint");
+            assert!(hint.contains(needle), "{code}: {hint}");
+        }
+    }
+
+    #[test]
+    fn a_frozen_batch_is_named_as_such() {
+        let body = r#"{"error":"A completed batch is frozen.","code":"run_completed","errors":[
+            {"code":"run_completed","message":"批次已完成后不能再写入。"}]}"#;
+        let err = map_testcase_error(409, body);
+        // A frozen batch is a refusal of the write, not a transport
+        // failure.
+        assert_eq!(err.exit_code(), pbotcli_core::errors::EXIT_VALIDATION);
+        let hint = err.hint().expect("a hint");
+        assert!(hint.contains("--retest-of"), "{hint}");
+    }
+
+    #[test]
+    fn a_sentence_that_mentions_a_code_is_not_a_refusal_of_that_code() {
+        // The code of a refusal is the first word of a line — a sentence
+        // that holds the code in the middle is not a refusal of it.
+        let body = r#"{"error":"The batch is not valid.","code":"invalid_batch","errors":[
+            {"code":"run_completed","message":"The batch was already completed (run_completed)."}]}"#;
+        let err = map_testcase_error(400, body);
+        assert!(carries_code(&err, "run_completed"));
+        assert!(!carries_code(&err, "duplicate_case_number"));
+    }
+
+    #[test]
+    fn the_code_of_a_refusal_is_found_in_the_message() {
+        let body = r#"{"error":"The test case is already in this batch.","code":"duplicate_case_number","errors":[
+            {"code":"duplicate_case_number","message":"同一个用例在批次中重复出现。"}]}"#;
+        let err = map_testcase_error(409, body);
+        assert!(carries_code(&err, "duplicate_case_number"));
+        // The code is matched as a word: a longer code that holds it is
+        // not the code.
+        assert!(!carries_code(&err, "duplicate"));
+        assert!(!carries_code(&err, "run_completed"));
+    }
+
+    #[test]
+    fn the_missing_evidence_names_the_flag_that_writes_it() {
+        let body = r#"{"error":"The batch is not valid.","code":"invalid_batch","errors":[
+            {"code":"evidence_missing","message":"缺少必填项：证据。","path":"cases[TC-CLI-007].evidence","field":"evidence","case_number":"TC-CLI-007","step_sequence":null}]}"#;
+        let err = map_testcase_error(400, body);
+        let hint = err.hint().expect("a hint");
+        assert!(hint.contains("--evidence"), "{hint}");
     }
 }

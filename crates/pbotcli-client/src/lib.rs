@@ -8,6 +8,7 @@
 pub mod asset;
 pub mod tcerror;
 pub mod testcase;
+pub mod testrun;
 
 use pbotcli_cache::Cache;
 use pbotcli_core::{Config, PlaneError};

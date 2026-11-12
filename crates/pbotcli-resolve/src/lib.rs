@@ -4,6 +4,7 @@
 //! token_sort_ratio, threshold 60) and `utils/resolve.py`.
 
 pub mod testcase;
+pub mod testrun;
 
 use pbotcli_client::PlaneClient;
 use pbotcli_core::PlaneError;

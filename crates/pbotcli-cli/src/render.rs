@@ -6,6 +6,9 @@ use std::collections::HashMap;
 
 use pbotcli_html::strip_html_tags;
 use pbotcli_types::testcase::{TestCase, TestCaseIssueLink, TestCaseModule, TestCaseStep};
+use pbotcli_types::testrun::{
+    TestRun, TestRunAttachment, TestRunCase, TestRunStep, TestRunSummary,
+};
 use pbotcli_types::{Attachment, Comment, IntakeItem, WorkItem};
 use serde_json::{Value, json};
 
@@ -321,6 +324,11 @@ pub fn test_case_step_view(step: &TestCaseStep) -> Value {
 }
 
 /// JSON view of one link between a case and a work item.
+///
+/// The add of a link and the list of the links answer the same shape.
+/// A link that names no work item carries `null` for its identifier and
+/// its name — the value types of the `--json` output are a contract
+/// (ADR-0005), so they are not changed into empty strings.
 pub fn test_case_issue_view(link: &TestCaseIssueLink) -> Value {
     json!({
         "id": link.id,
@@ -378,6 +386,135 @@ pub fn test_case_view(case: &TestCase) -> Value {
             .as_ref()
             .map(|user| user.full_name())
             .unwrap_or_default(),
+    })
+}
+
+/// JSON view of one file attached to a record of a batch.
+pub fn test_run_attachment_view(attachment: &TestRunAttachment) -> Value {
+    json!({
+        "id": attachment.id,
+        "asset_id": attachment.asset_id,
+        "name": attachment.name,
+        "size": attachment.size,
+        "url": attachment.url,
+    })
+}
+
+/// JSON view of one step record of a batch case.
+///
+/// The action and the expected result are the **snapshot** of the step of
+/// the test case: a later edit of the case never rewrites what the batch
+/// recorded.
+pub fn test_run_step_view(step: &TestRunStep) -> Value {
+    json!({
+        "id": step.id,
+        "sequence_id": step.sequence_id,
+        "action": step.action_snapshot,
+        "expected_result": step.expected_result_snapshot,
+        "conclusion": step.conclusion,
+        "actual_value": step.actual_value,
+        "attachments": step.attachments.iter().map(test_run_attachment_view).collect::<Vec<_>>(),
+    })
+}
+
+/// JSON view of one case record of a batch.
+///
+/// The keys are the contract of the `--json` output (ADR-0005): the
+/// number of the case, its conclusion, the evidence and the other
+/// writable fields, the step records with their verdicts and their
+/// measured values, and the files that hang on the case.
+pub fn test_run_case_view(case: &TestRunCase) -> Value {
+    json!({
+        "id": case.id,
+        "test_case": case.test_case,
+        "case_number": case.case_number,
+        "case_module_code": case.case_module_code,
+        "case_title": case.case_title,
+        "case_purpose": case.case_purpose,
+        "case_object_overview": case.case_object_overview,
+        "case_priority": case.case_priority,
+        "case_preconditions": case.case_preconditions,
+        "case_environment": case.case_environment,
+        "conclusion": case.conclusion,
+        "evidence": case.evidence,
+        "remarks": case.remarks,
+        "actual_result_summary": case.actual_result_summary,
+        "na_reason": case.na_reason,
+        "na_criteria_source": case.na_criteria_source,
+        "manual_executor": case.manual_executor,
+        "manual_condition": case.manual_condition,
+        "steps": case.steps.iter().map(test_run_step_view).collect::<Vec<_>>(),
+        "attachments": case.attachments.iter().map(test_run_attachment_view).collect::<Vec<_>>(),
+        "created_at": case.created_at,
+        "updated_at": case.updated_at,
+    })
+}
+
+/// JSON view of one batch.
+///
+/// The number of the batch is the name it carries and the server assigns
+/// it, so it is the first field of the view — a caller keys on it.
+pub fn test_run_view(run: &TestRun) -> Value {
+    json!({
+        "id": run.id,
+        "number": run.number,
+        "run_date": run.run_date,
+        "version_number": run.version_number,
+        "build_number": run.build_number,
+        "commit_hash": run.commit_hash,
+        "environment": run.environment,
+        "executed_by": run.executed_by,
+        "executed_by_name": run.executed_by_name,
+        "status": run.status,
+        "retest_of": run.retest_of,
+        "retest_of_number": run.retest_of_number,
+        "cases": run.cases.iter().map(test_run_case_view).collect::<Vec<_>>(),
+        "created_at": run.created_at,
+        "updated_at": run.updated_at,
+        "created_by": run
+            .created_by
+            .as_ref()
+            .map(|user| user.full_name())
+            .unwrap_or_default(),
+    })
+}
+
+/// JSON view of the summary of a batch.
+///
+/// The four counts are not a partition of the total — `manual` overlaps
+/// `fail` — so the view carries them as they are.
+///
+/// The view has two shapes: the counts and the deviations of a batch,
+/// and the answer of an instance that does not serve the endpoint at
+/// all — `{"number": …, "available": false}`.
+pub fn test_run_summary_view(number: &str, summary: &TestRunSummary) -> Value {
+    json!({
+        "number": number,
+        "available": true,
+        "total": summary.total,
+        "pass": summary.pass,
+        "fail": summary.fail,
+        "na": summary.na,
+        "manual": summary.manual,
+        "deviations": summary
+            .deviations
+            .iter()
+            .map(|deviation| json!({
+                "case_number": deviation.case_number,
+                "summary": deviation.summary,
+            }))
+            .collect::<Vec<_>>(),
+    })
+}
+
+/// JSON view of a summary the instance does not serve.
+///
+/// The endpoint is optional on the server side, so the answer says that
+/// it is not available instead of pretending to carry counts.
+pub fn test_run_summary_unavailable_view(number: &str) -> Value {
+    json!({
+        "number": number,
+        "available": false,
     })
 }
 
@@ -628,6 +765,22 @@ mod tests {
     }
 
     #[test]
+    fn a_link_that_names_no_work_item_carries_null() {
+        // The value types of the `--json` output are a contract: a link
+        // without a work item answers `null`, not an empty string.
+        let view = test_case_issue_view(&TestCaseIssueLink {
+            id: "l1".into(),
+            issue_id: "wi1".into(),
+            issue_identifier: None,
+            issue_name: None,
+            ..Default::default()
+        });
+        assert!(view["issue_identifier"].is_null(), "{view}");
+        assert!(view["issue_name"].is_null(), "{view}");
+        assert_eq!(view["issue_id"], "wi1");
+    }
+
+    #[test]
     fn the_module_view_carries_the_code_and_the_description() {
         let view = test_case_module_view(&TestCaseModule {
             id: "m1".into(),
@@ -637,5 +790,106 @@ mod tests {
         });
         assert_eq!(view["code"], "CLI");
         assert_eq!(view["description"], "The command line of pbot");
+    }
+
+    fn run_case() -> TestRunCase {
+        TestRunCase {
+            id: "rc1".into(),
+            test_case: "tc1".into(),
+            case_number: "TC-CLI-007".into(),
+            case_module_code: "CLI".into(),
+            case_title: "Log in".into(),
+            conclusion: "FAIL".into(),
+            evidence: "see the screenshot".into(),
+            steps: vec![TestRunStep {
+                id: "s1".into(),
+                sequence_id: 3,
+                action_snapshot: "Log in".into(),
+                expected_result_snapshot: "The dashboard is shown".into(),
+                conclusion: "fail".into(),
+                actual_value: "the password was refused".into(),
+                attachments: vec![TestRunAttachment {
+                    id: "a1".into(),
+                    asset_id: "a1".into(),
+                    name: "shot.png".into(),
+                    size: Some(12.0),
+                    url: "http://x/a1".into(),
+                }],
+                ..Default::default()
+            }],
+            attachments: vec![TestRunAttachment {
+                id: "a2".into(),
+                asset_id: "a2".into(),
+                name: "report.png".into(),
+                size: Some(24.0),
+                url: "http://x/a2".into(),
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_batch_view_carries_the_number_and_its_cases() {
+        let run = TestRun {
+            id: "r1".into(),
+            number: "RUN-20261109-01".into(),
+            run_date: "2026-11-09".into(),
+            version_number: "1.2.3".into(),
+            build_number: "42".into(),
+            commit_hash: "abc1234".into(),
+            environment: "bench".into(),
+            executed_by: "u1".into(),
+            executed_by_name: "Jicai Liu".into(),
+            status: "in_progress".into(),
+            retest_of: Some("r0".into()),
+            retest_of_number: Some("RUN-20261108-02".into()),
+            cases: vec![run_case()],
+            ..Default::default()
+        };
+        let view = test_run_view(&run);
+        assert_eq!(view["number"], "RUN-20261109-01");
+        assert_eq!(view["run_date"], "2026-11-09");
+        assert_eq!(view["executed_by_name"], "Jicai Liu");
+        assert_eq!(view["retest_of_number"], "RUN-20261108-02");
+        // The cases of the batch carry their number, their conclusion,
+        // their steps and their files.
+        let case = &view["cases"][0];
+        assert_eq!(case["case_number"], "TC-CLI-007");
+        assert_eq!(case["conclusion"], "FAIL");
+        assert_eq!(case["steps"][0]["sequence_id"], 3);
+        assert_eq!(case["steps"][0]["conclusion"], "fail");
+        assert_eq!(case["steps"][0]["actual_value"], "the password was refused");
+        assert_eq!(case["steps"][0]["attachments"][0]["name"], "shot.png");
+        assert_eq!(case["attachments"][0]["name"], "report.png");
+    }
+
+    #[test]
+    fn the_summary_view_carries_the_counts_and_the_deviations() {
+        let summary = TestRunSummary {
+            total: 1,
+            pass: 0,
+            fail: 1,
+            na: 0,
+            manual: 1,
+            deviations: vec![pbotcli_types::testrun::TestRunDeviation {
+                case_number: "TC-CLI-007".into(),
+                summary: "the password was refused".into(),
+            }],
+        };
+        let view = test_run_summary_view("RUN-20261109-01", &summary);
+        assert_eq!(view["available"], true);
+        assert_eq!(view["total"], 1);
+        assert_eq!(view["fail"], 1);
+        // The counts overlap; the view reports them as they are.
+        assert_eq!(view["manual"], 1);
+        assert_eq!(view["deviations"][0]["case_number"], "TC-CLI-007");
+    }
+
+    #[test]
+    fn a_summary_the_instance_does_not_serve_says_so() {
+        let view = test_run_summary_unavailable_view("RUN-20261109-01");
+        assert_eq!(view["available"], false);
+        assert_eq!(view["number"], "RUN-20261109-01");
+        assert!(view.get("total").is_none());
     }
 }

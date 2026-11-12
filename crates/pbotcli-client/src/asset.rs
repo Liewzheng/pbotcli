@@ -51,6 +51,21 @@ pub struct AssetUpload {
     pub upload_data: Value,
 }
 
+/// A file that was uploaded and read back by the server.
+///
+/// The registration answers the id of the file and the presigned target;
+/// the read-back answers the **confirmed** state of the file — the one a
+/// caller shows as the evidence of a record.
+#[derive(Debug, Clone, Default)]
+pub struct TestEvidence {
+    /// The id of the file.
+    pub asset_id: String,
+    /// The url the file is served under.
+    pub asset_url: String,
+    /// The body the server answered with when the file was read back.
+    pub confirmed: Value,
+}
+
 /// Reject a file that is not one of the images the server accepts.
 ///
 /// The refusal is a validation error (exit 5): the file was refused before
@@ -74,7 +89,9 @@ impl PlaneClient {
     /// The bytes go through the whole chain: register the upload (which
     /// binds the file to the record), push them to the presigned target,
     /// mark the asset uploaded and read it back — a 2xx is not proof that
-    /// the write landed (ADR-0007).
+    /// the write landed (ADR-0007). The answer is the **confirmed** file:
+    /// the state the server holds after the upload, not the registration
+    /// that asked for it.
     ///
     /// `entity_identifier` is the id of the record the file belongs to, and
     /// it is not optional: the upload **is** the bind. The file hangs on
@@ -90,7 +107,7 @@ impl PlaneClient {
         bytes: Vec<u8>,
         entity_type: &str,
         entity_identifier: &str,
-    ) -> Result<AssetUpload, PlaneError> {
+    ) -> Result<TestEvidence, PlaneError> {
         ensure_test_evidence_mime(mime)?;
         let size = bytes.len() as u64;
         let body = serde_json::json!({
@@ -125,14 +142,20 @@ impl PlaneClient {
         self.confirm_asset(&created.asset_id).await?;
 
         // Read the asset back: the confirm PATCH answering 2xx does not
-        // prove that the file is there (ADR-0007).
-        let (status, _) = self.get_workspace_asset(&created.asset_id).await?;
+        // prove that the file is there (ADR-0007). The body of that read
+        // is the confirmed state of the file, and it is what the caller
+        // shows.
+        let (status, confirmed) = self.get_workspace_asset(&created.asset_id).await?;
         if status != 200 {
             return Err(PlaneError::Api {
                 message: "The asset was not confirmed by the server after upload.".into(),
             });
         }
-        Ok(created)
+        Ok(TestEvidence {
+            asset_id: created.asset_id,
+            asset_url: created.asset_url,
+            confirmed,
+        })
     }
 }
 
@@ -221,6 +244,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(uploaded.asset_id, "a1");
+        // The answer is the confirmed state of the file — the body the
+        // read-back answered with, not the registration that asked for it.
+        assert_eq!(uploaded.confirmed["asset_id"], "a1");
+        assert_eq!(uploaded.confirmed["asset_url"], "http://x/a1");
         register.assert_async().await;
         upload.assert_async().await;
         confirm.assert_async().await;

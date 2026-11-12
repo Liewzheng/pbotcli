@@ -69,6 +69,11 @@ pub enum TcCmd {
     ///
     /// The number of the case is assigned by the server. The module code
     /// must be registered in the project (`pbot tc module create`).
+    ///
+    /// A case needs at least one step: pass --step "action | expected
+    /// result" (or a --steps-file that holds one). The server refuses a
+    /// case without a title, a purpose, an object overview, the
+    /// preconditions, the environment or a priority.
     #[command(group(
         ArgGroup::new("tc_steps")
             .required(false)
