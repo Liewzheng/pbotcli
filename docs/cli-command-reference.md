@@ -1336,6 +1336,11 @@ The conclusion of a case is written **once**: the server refuses a second write 
 corrected by voiding the record and running the case again in a new batch
 (`pbot run create --retest-of <run>`).
 
+**Which code the refusal carries depends on the order.** A second write on an **open** batch is
+refused with `conclusion_is_final`; the same write **after** the finalize is refused with
+`run_completed`, because a completed batch is frozen and the freeze is checked first. Read the
+code, not the order you expected.
+
 ### pbot run remove
 
 Take a case out of a batch.

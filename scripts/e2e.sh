@@ -22,16 +22,16 @@ die()  { printf '   FAIL: %s\n' "$*" >&2; FAILURES=$((FAILURES + 1)); }
 
 cleanup() {
   say "cleanup $MARK"
-  pbot wi ls -p "$PROJECT" --no-cache --json 2>/dev/null \
+  "$PBOT" wi ls -p "$PROJECT" --no-cache --json 2>/dev/null \
     | jq -r '.[] | select(.name | startswith("pbot-e2e")) | .id' \
     | while read -r id; do
-        pbot wi delete "$id" -p "$PROJECT" >/dev/null 2>&1 || true
+        "$PBOT" wi delete "$id" -p "$PROJECT" >/dev/null 2>&1 || true
         sleep "$PAUSE"
       done
 }
 trap cleanup EXIT
 
-export http_proxy="${http_proxy:-}" https_proxy="${https_proxy:-}"
+export http_proxy="${http_proxy:-}" https_proxy="${https_proxy:-}" all_proxy="${all_proxy:-}"
 # Use the correct proxy if the env one is malformed (double-encoded).
 if [[ "${https_proxy:-}" == *"%3A"* ]]; then
   export https_proxy="http://192.168.1.180:7890" http_proxy="http://192.168.1.180:7890"
@@ -72,9 +72,13 @@ $PBOT attachment attach "$id" -f "$png" -p "$PROJECT" --json >/dev/null 2>&1 && 
 
 say "inline image (-i) on update"
 sleep "$PAUSE"
-$PBOT wi update "$id" -p "$PROJECT" -i "$png" --json >/dev/null 2>&1
+# The file was attached under the same name one step ago, and the CLI
+# refuses a duplicate name on purpose — --force is the documented way
+# through, and this is the step that proves the inline image works.
+$PBOT wi update "$id" -p "$PROJECT" -i "$png" --force --json >/dev/null 2>&1 \
+  && ok "inline img" || die "inline img"
 html="$($PBOT wi show "$id" --no-comments --no-cache --json 2>/dev/null | jq -r .description_html)"
-grep -q '<img ' <<<"$html" && ok "inline img" || die "inline img"
+grep -q '<img ' <<<"$html" && ok "inline img in the description" || die "inline img"
 rm -f "$png"
 
 say "verify attachment uploaded"
@@ -95,9 +99,9 @@ up="$($PBOT attachment ls "$id" -p "$PROJECT" --no-cache --json 2>/dev/null | jq
 # The module code is 2 to 6 UPPERCASE letters, so the pid is spelled out in
 # letters: two smoke runs never fight over the same code.
 letters_of() {
-  local n=$1 out=""
+  local n=$1 out="" alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZ"
   while [[ $n -gt 0 && ${#out} -lt 5 ]]; do
-    out="$(printf '%c' $(( n % 26 + 65 )))$out"
+    out="${alphabet:$(( n % 26)):1}$out"
     n=$(( n / 26 ))
   done
   printf '%s' "${out:-A}"
@@ -117,6 +121,8 @@ else
     && ok "module $MODULE_CODE" || die "tc module create"
 
   sleep "$PAUSE"
+  # `|| true` keeps a failed command from killing the script under `set -e`:
+  # the check below reports the failure instead.
   case_json="$($PBOT tc create -p "$PROJECT" --module "$MODULE_CODE" \
     --title "pbot-e2e $MARK" \
     --purpose "The smoke test of the test-case feature." \
@@ -127,13 +133,13 @@ else
     --step "Write the verdict of step 2 | The step record carries the verdict" \
     --step "Write the conclusion of the case | The case record carries the conclusion" \
     --step "Close the batch | The batch is completed" \
-    --json 2>/dev/null)"
+    --json 2>/dev/null || true)"
   case_number="$(jq -r '.number // empty' <<<"$case_json")"
   [[ -n "$case_number" ]] && ok "case $case_number" || die "tc create"
 
   sleep "$PAUSE"
   run_json="$($PBOT run create -p "$PROJECT" --version 1.6.0 --build "$MARK" \
-    --commit 0000000 --env "pbot e2e" --executed-by me --json 2>/dev/null)"
+    --commit 0000000 --env "pbot e2e" --executed-by me --json 2>/dev/null || true)"
   run_uuid="$(jq -r '.id // empty' <<<"$run_json")"
   run_number="$(jq -r '.number // empty' <<<"$run_json")"
   [[ -n "$run_uuid" ]] && ok "batch $run_number" || die "run create"
@@ -162,11 +168,10 @@ else
     --image "$png" --yes -p "$PROJECT" --json >/dev/null 2>&1 \
     && ok "conclusion FAIL with the case evidence" || die "run conclude"
 
-  sleep "$PAUSE"
-  $PBOT run finalize "$run_uuid" -p "$PROJECT" --json >/dev/null 2>&1 \
-    && ok "finalize" || die "run finalize"
-
-  # The conclusion is written once: the second write is refused.
+  # The conclusion is written once: the second write is refused. The batch is
+  # still open here, so the refusal names the conclusion — a write after the
+  # finalize is refused with run_completed instead, because a completed batch
+  # is frozen.
   sleep "$PAUSE"
   again="$($PBOT run conclude "$run_uuid" --case "$case_number" --conclusion PASS \
     --evidence "a second conclusion write" --yes -p "$PROJECT" --json 2>&1)" && again_rc=0 || again_rc=$?
@@ -174,6 +179,20 @@ else
     ok "the second conclusion write is refused (conclusion_is_final)"
   else
     die "the second conclusion write (exit $again_rc)"
+  fi
+
+  sleep "$PAUSE"
+  $PBOT run finalize "$run_uuid" -p "$PROJECT" --json >/dev/null 2>&1 \
+    && ok "finalize" || die "run finalize"
+
+  # A completed batch is frozen: every later write to it is refused.
+  sleep "$PAUSE"
+  frozen="$($PBOT run conclude "$run_uuid" --case "$case_number" --conclusion PASS \
+    --evidence "a write into a completed batch" --yes -p "$PROJECT" --json 2>&1)" && frozen_rc=0 || frozen_rc=$?
+  if [[ $frozen_rc -ne 0 ]] && grep -q 'run_completed' <<<"$frozen"; then
+    ok "a write into the completed batch is refused (run_completed)"
+  else
+    die "a write into the completed batch (exit $frozen_rc)"
   fi
 
   rm -f "$png"

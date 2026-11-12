@@ -510,6 +510,10 @@ refuses a second write with `conclusion_is_final`, and **no flag overwrites a ve
 wrong verdict is corrected by voiding the record and running the case again in a new batch
 (`pbot run create --retest-of <run>`).
 
+**The order decides the code.** A second conclusion write on an **open** batch is refused with
+`conclusion_is_final`; the same write **after** the finalize is refused with `run_completed`,
+because the freeze of a completed batch is checked first.
+
 **The evidence hangs on the case, not on the step.** The server counts case-level evidence only:
 a case-level text (`--evidence` / `--evidence-file`) **or** a case-level file (`--image`). A
 screenshot of a **step** does not count — the finalize answers `evidence_missing` with the path

@@ -2,9 +2,9 @@
 
 `pbotcli` is a CLI for [Plane.so](https://plane.so) (SaaS or self-hosted).
 It manages projects, work items, cycles, modules, documents, labels, states,
-intake queues, and comments. Its defining feature is **fuzzy resource
-resolution**: any resource can be referenced by a name, an identifier
-(`ABC-123`), or a UUID.
+intake queues, comments, test cases and test runs. Its defining feature is
+**fuzzy resource resolution**: any resource can be referenced by a name, an
+identifier (`ABC-123`), or a UUID.
 
 The CLI is the Rust line (`pbotcli`, installed alongside the short `pbot`
 alias); the Python implementation it replaced has been removed from the

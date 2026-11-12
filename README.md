@@ -177,13 +177,13 @@ pbot run step RUN-20261112-01 --case TC-CLI-001 --step 2 --verdict fail \
 pbot run conclude RUN-20261112-01 --case TC-CLI-001 --conclusion FAIL \
   --evidence "the button stayed grey" --yes -p PLANECLI --json
 
-# 7. close the batch
-pbot run finalize RUN-20261112-01 -p PLANECLI --json
-
-# 8. a second conclusion write is refused — the code says why
+# 7. a second conclusion write is refused — the code says why
 pbot run conclude RUN-20261112-01 --case TC-CLI-001 --conclusion PASS --yes -p PLANECLI
 # Error: invalid_payload
 # conclusion_is_final (field conclusion): 结论一经写入不再修改，请作废该记录后在新批次中重测。
+
+# 8. close the batch
+pbot run finalize RUN-20261112-01 -p PLANECLI --json
 ```
 
 Three details the flow above depends on:
@@ -201,6 +201,9 @@ Three details the flow above depends on:
   `evidence_missing`, `run_executed_by_missing`, `duplicate_case_number`, …) next to the sentence
   of the server. Key on the code, never on the prose — it is the first word of the first line of
   the error.
+- **The order of the two refusals matters.** A second conclusion write on an **open** batch is
+  refused with `conclusion_is_final`; the same write **after** the finalize is refused with
+  `run_completed`, because a completed batch is frozen and the freeze is checked first.
 
 The exit codes of the feature: `0` success, `2` authentication **or** permission **or** a usage
 error, `3` not found, `4` API or transport failure, `5` validation — both the local checks and

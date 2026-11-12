@@ -1263,6 +1263,10 @@ pbot run conclude <run> --case <case> --conclusion <conclusion>
 用例结论**只写一次**：服务端对第二次写入回 `conclusion_is_final`，而且**没有任何参数能覆盖
 它**。写错了的做法是作废该记录、在新批次里重跑（`pbot run create --retest-of <run>`）。
 
+**拒绝时带哪个码，取决于顺序。** 在**未关闭**的批次上第二次写入，回的是 `conclusion_is_final`；
+同样的写入放在 finalize **之后**，回的是 `run_completed`——已完成的批次被冻结，冻结先被检查。
+请读码，不要按你预期的顺序推断。
+
 ### pbot run remove
 
 把一条用例从批次里移出。
