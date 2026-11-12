@@ -69,8 +69,9 @@ pbot [全局选项] <命令> [<子命令>] [<参数>...] [选项]
   也不是 404 的状态一律归到 API 类，所以 403（服务主体在该项目上没有授权）返回 4。测试用例功能
   （`tc`、`run`）有自己的映射，把类别分得更细：403 是**权限失败**（返回 2，报错里带着服务端
   自己的补救说明）；带**稳定原因码**的 400 或 409（`invalid_test_case`、`conclusion_is_final`、
-  `evidence_missing` 等）是**校验失败**（返回 5）——调用方可以据此行动。不带原因码的 400 或 409
-  在那里同样返回 5，因为这个 API 的冲突是对写入的拒绝，不是传输故障。
+  `evidence_missing` 等）是**校验失败**（返回 5）——调用方可以据此行动。**不带**原因码的 **409**
+  在那里同样返回 5，因为这个 API 的冲突是对写入的拒绝，不是传输故障；**不带**原因码的 **400**
+  归 API 类（返回 4），和其他命令的 400 一样。
 
 ### 测试用例功能（`tc`、`run`）有自己的映射
 
@@ -80,8 +81,8 @@ pbot [全局选项] <命令> [<子命令>] [<参数>...] [选项]
 | 认证 / 权限 | 2 | `401`、`403`——服务主体在该项目上没有授权 |
 | 用法错误 | 2 | 缺少必填参数、未知参数 |
 | 资源不存在 | 3 | 项目里没有这个用例或这个批次 |
-| API / 传输 | 4 | 5xx、连接失败、客户端读不懂的应答 |
-| 校验 | 5 | 本地检查；带稳定原因码的 400 或 409；以及不带原因码的 400 或 409（这个 API 的冲突是对写入的拒绝） |
+| API / 传输 | 4 | 5xx、连接失败、客户端读不懂的应答；以及不带原因码的 400 |
+| 校验 | 5 | 本地检查；带稳定原因码的 400 或 409；以及不带原因码的 409（这个 API 的冲突是对写入的拒绝） |
 
 ## 命令索引
 
@@ -1096,8 +1097,10 @@ pbot tc issues <case> -p <project> [-a <工作项>] [-r <工作项>] [--json]
 
 | 选项 | 说明 |
 |---|---|
+| `-p, --project <project>` | 项目名称、标识符或 UUID（必填）。 |
 | `-a, --add <work item>` | 关联一个工作项（标识符或 UUID）。 |
 | `-r, --remove <work item>` | 解除一个工作项的关联（标识符或 UUID）。 |
+| `--json` | 把 JSON 打到 stdout，而不是把表格打到 stderr。 |
 
 `--add` 与 `--remove` 互斥；两个都不给就是列出关联。
 
@@ -1255,7 +1258,7 @@ pbot run step <run> --case <case> --step <n> --verdict <verdict>
 | `--step <n>` | 用例里的第几步（1、2、3 …）。 |
 | `--verdict <verdict>` | `pass`、`fail` 或 `unset`——没执行过的步骤是 `unset`。`N/A` 是用例的结论，不是步骤的判定，本地就会拒绝。 |
 | `--actual <markdown>` | 实测值。 |
-| `--actual-file <path>` | 存放实测值的文件。 |
+| `--actual-file <path>` | 存放实测值的文件。`--actual` 与 `--actual-file` 互斥。 |
 | `--image <path>` | 步骤的截图。 |
 | `-y, --yes` | 确认写入（命令不在终端上时必须给）。 |
 
@@ -1290,7 +1293,7 @@ pbot run conclude <run> --case <case> --conclusion <conclusion>
 | `--case <case>` | 批次里的那条用例（`TC-CLI-007`）。 |
 | `--conclusion <conclusion>` | `PASS`、`FAIL`、`N/A` 或 `MANUAL`（`NA` 也接受，会归一成 `N/A`）。 |
 | `--evidence <markdown>` | 用例的证据。 |
-| `--evidence-file <path>` | 存放用例证据的文件（字节原样到达服务端）。 |
+| `--evidence-file <path>` | 存放用例证据的文件（字节原样到达服务端）。`--evidence` 与 `--evidence-file` 互斥。 |
 | `--image <path>` | 用例的截图——只有这一张截图就足够当证据。 |
 | `--remarks <text>` | 自由备注。 |
 | `--actual-result-summary <text>` | 用例的一句话现象（汇总会显示它）。 |

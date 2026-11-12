@@ -73,9 +73,9 @@ Two details worth knowing before a script keys on these:
   (`tc`, `run`) has its own mapper and splits the classes finer: a 403 is a **permission failure**
   (exit 2, with the server's own remedy in the message), and a 400 or a 409 whose body carries a
   **stable reason code** (`invalid_test_case`, `conclusion_is_final`, `evidence_missing`, …) is a
-  **validation failure** (exit 5) — the reason the caller can act on. A 400 or a 409 without a
-  code is still exit 5 there, because a conflict of this API is a refusal of the write rather than
-  a transport failure.
+  **validation failure** (exit 5) — the reason the caller can act on. A **409 without** a code is
+  exit 5 as well, because a conflict of this API is a refusal of the write rather than a transport
+  failure; a **400 without** a code is the API class (exit 4), like a 400 of any other command.
 
 ### The test-case feature (`tc`, `run`) has its own mapping
 
@@ -85,8 +85,8 @@ Two details worth knowing before a script keys on these:
 | Authentication / permission | 2 | `401`, `403` — a service principal without the grant on the project |
 | Usage error | 2 | a missing required flag, an unknown flag |
 | Not found | 3 | a case or a batch that no project holds |
-| API / transport | 4 | a 5xx, a connection error, an answer the client cannot read |
-| Validation | 5 | a local check, a 400 or a 409 that carries a stable reason code, and a 400 or a 409 that carries none (a conflict of this API is a refusal of the write) |
+| API / transport | 4 | a 5xx, a connection error, an answer the client cannot read, and a 400 that carries no reason code |
+| Validation | 5 | a local check, a 400 or a 409 that carries a stable reason code, and a 409 that carries none (a conflict of this API is a refusal of the write) |
 
 ## COMMANDS
 
@@ -1159,8 +1159,10 @@ pbot tc issues <case> -p <project> [-a <work item>] [-r <work item>] [--json]
 
 | Option | Description |
 |---|---|
+| `-p, --project <project>` | Project name, identifier, or UUID (required). |
 | `-a, --add <work item>` | Link a work item (identifier or UUID). |
 | `-r, --remove <work item>` | Unlink a work item (identifier or UUID). |
+| `--json` | Print JSON to stdout instead of a table on stderr. |
 
 `--add` and `--remove` are mutually exclusive. Without either the links are listed.
 
@@ -1327,7 +1329,7 @@ pbot run step <run> --case <case> --step <n> --verdict <verdict>
 | `--step <n>` | The number of the step in the case (1, 2, 3 …). |
 | `--verdict <verdict>` | `pass`, `fail` or `unset` — a step that was not executed is `unset`. `N/A` is a conclusion of a case, not a verdict of a step, and is refused locally. |
 | `--actual <markdown>` | The measured value. |
-| `--actual-file <path>` | A file with the measured value. |
+| `--actual-file <path>` | A file with the measured value. `--actual` and `--actual-file` are mutually exclusive. |
 | `--image <path>` | A screenshot of the step. |
 | `-y, --yes` | Confirm the write (needed when the command is not on a terminal). |
 
@@ -1363,7 +1365,7 @@ pbot run conclude <run> --case <case> --conclusion <conclusion>
 | `--case <case>` | The case of the batch (`TC-CLI-007`). |
 | `--conclusion <conclusion>` | `PASS`, `FAIL`, `N/A` or `MANUAL` (`NA` is accepted and normalized to `N/A`). |
 | `--evidence <markdown>` | The evidence of the case. |
-| `--evidence-file <path>` | A file with the evidence of the case (the bytes reach the server verbatim). |
+| `--evidence-file <path>` | A file with the evidence of the case (the bytes reach the server verbatim). `--evidence` and `--evidence-file` are mutually exclusive. |
 | `--image <path>` | A screenshot of the case — the evidence of a case on its own is enough. |
 | `--remarks <text>` | Free-form remarks. |
 | `--actual-result-summary <text>` | The one-line phenomenon of the case (the summary shows it). |
