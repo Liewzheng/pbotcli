@@ -247,19 +247,16 @@ fn is_wrapper(code: &str) -> bool {
 /// the case and the step of every problem above it.
 fn hint_for(envelope: &ErrorEnvelope) -> String {
     let wrapper = envelope.code.as_deref().unwrap_or_default();
-    let reasons: Vec<&str> = envelope
-        .errors
-        .iter()
-        .map(|entry| entry.code.as_str())
-        .filter(|code| !code.is_empty())
-        .collect();
     if !is_wrapper(wrapper)
         && let Some(hint) = hint_for_code(wrapper)
     {
         return hint.to_string();
     }
-    for reason in reasons {
-        if let Some(hint) = hint_for_code(reason) {
+    for entry in &envelope.errors {
+        if entry.code.is_empty() {
+            continue;
+        }
+        if let Some(hint) = hint_for_code(&entry.code) {
             return hint.to_string();
         }
     }

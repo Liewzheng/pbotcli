@@ -179,6 +179,40 @@ fn is_email(s: &str) -> bool {
     !local.trim().is_empty() && host.contains('.') && !host.starts_with('.')
 }
 
+/// A field the server may answer with `null`.
+///
+/// The server sends an explicit `null` for a field it has no value for —
+/// the executor of a batch that was created without one, the test case of
+/// a record whose test case was deleted — and a plain `String` refuses
+/// it: `#[serde(default)]` covers a **missing** key, not a `null` value.
+///
+/// The value of the field is the **empty string**, the same shape every
+/// other absent field of a record carries — so the JSON the CLI prints
+/// does not change, and a caller does not have to test for a `null` that
+/// was never there.
+///
+/// Only the `null` is tolerated: a number, an object or an array where
+/// the field is a string is still refused, so the field cannot drift
+/// away from the string it is without the client noticing.
+///
+/// ```
+/// # use pbotcli_types::null_to_empty;
+/// # use serde::Deserialize;
+/// #[derive(Deserialize)]
+/// struct Batch {
+///     #[serde(default, deserialize_with = "null_to_empty")]
+///     executed_by: String,
+/// }
+/// let batch: Batch = serde_json::from_str(r#"{"executed_by": null}"#).unwrap();
+/// assert_eq!(batch.executed_by, "");
+/// ```
+pub fn null_to_empty<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 /// A member row of `/api/v1/workspaces/{ws}/members/`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Member {

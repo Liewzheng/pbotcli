@@ -24,31 +24,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Member;
-
-/// A field the server may answer with `null`.
-///
-/// The server sends an explicit `null` for a field it has no value for —
-/// the executor of a batch that was created without one, the test case of
-/// a record whose case was deleted — and a plain `String` refuses it:
-/// `#[serde(default)]` covers a **missing** key, not a `null` value, so
-/// the whole document was refused with `invalid type: null, expected a
-/// string` and every read of the feature died with it.
-///
-/// The value of the field is the **empty string** here, the same shape
-/// every other absent field of a record carries — so the JSON the CLI
-/// prints does not change, and a batch without an executor still prints
-/// an empty executor rather than a `null` that a caller would have to
-/// test for.
-///
-/// Only the `null` is tolerated: a number, an object or an array where
-/// the field is a string is still refused, so the field cannot drift
-/// away from the string it is without the client noticing.
-fn null_to_empty<'de, D>(deserializer: D) -> Result<String, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
-}
+use crate::null_to_empty;
 
 /// The conclusions a case record of a batch may carry.
 ///

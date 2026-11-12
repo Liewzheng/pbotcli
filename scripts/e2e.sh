@@ -17,17 +17,6 @@ PBOT="${PBOT:-pbot}"
 PAUSE="${PAUSE:-4}"          # seconds between calls (rate-limit buffer)
 MARK="pbot-e2e-$$"           # unique marker for cleanup
 FAILURES=0
-# The scratch file holds the error of the last command, so a failure says
-# why it failed instead of only naming the step.
-ERR_FILE="$(mktemp)"
-# The generated images live in a directory of their own: the name of the
-# file has to end in .png (the CLI reads the type of an image from its
-# extension), and a predictable path in a shared /tmp is not worth the risk.
-TMP_ROOT="${TMPDIR:-/tmp}"
-TMP_DIR="$(mktemp -d "$TMP_ROOT/${MARK}-XXXXXX")"
-# The cleanup is installed right here, so a failure between the two temp
-# files and the trap cannot leave them behind.
-trap cleanup EXIT
 
 say()  { printf '\n== %s\n' "$*"; }
 ok()   { printf '   ok: %s\n' "$*"; }
@@ -53,6 +42,18 @@ cleanup() {
   rm -f "$ERR_FILE"
   rm -rf "$TMP_DIR"
 }
+
+# The scratch file holds the error of the last command, so a failure says
+# why it failed instead of only naming the step.
+ERR_FILE="$(mktemp)"
+# The generated images live in a directory of their own: the name of the
+# file has to end in .png (the CLI reads the type of an image from its
+# extension), and a predictable path in a shared /tmp is not worth the risk.
+TMP_ROOT="${TMPDIR:-/tmp}"
+TMP_DIR="$(mktemp -d "$TMP_ROOT/${MARK}-XXXXXX")"
+# The trap is installed last: the cleanup is defined, and the two files it
+# removes exist, before anything can fail and call it.
+trap cleanup EXIT
 
 export http_proxy="${http_proxy:-}" https_proxy="${https_proxy:-}" all_proxy="${all_proxy:-}"
 # Use the correct proxy if the env one is malformed (double-encoded).
