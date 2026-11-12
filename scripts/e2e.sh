@@ -25,6 +25,9 @@ ERR_FILE="$(mktemp)"
 # extension), and a predictable path in a shared /tmp is not worth the risk.
 TMP_ROOT="${TMPDIR:-/tmp}"
 TMP_DIR="$(mktemp -d "$TMP_ROOT/${MARK}-XXXXXX")"
+# The cleanup is installed right here, so a failure between the two temp
+# files and the trap cannot leave them behind.
+trap cleanup EXIT
 
 say()  { printf '\n== %s\n' "$*"; }
 ok()   { printf '   ok: %s\n' "$*"; }
@@ -42,7 +45,6 @@ cleanup() {
   rm -f "$ERR_FILE"
   rm -rf "$TMP_DIR"
 }
-trap cleanup EXIT
 
 export http_proxy="${http_proxy:-}" https_proxy="${https_proxy:-}" all_proxy="${all_proxy:-}"
 # Use the correct proxy if the env one is malformed (double-encoded).
@@ -88,7 +90,7 @@ sleep "$PAUSE"
 # A file of its own name: the CLI refuses a duplicate attachment name on
 # purpose, and this step is not about that refusal.
 inline_png="$TMP_DIR/inline.png"
-python3 -c "import base64,sys;open(sys.argv[1],'wb').write(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='))" "$inline_png"
+cp "$png" "$inline_png"
 $PBOT wi update "$id" -p "$PROJECT" -i "$inline_png" --json >/dev/null 2>&1 \
   && ok "inline img" || die "inline img"
 html="$($PBOT wi show "$id" --no-comments --no-cache --json 2>/dev/null | jq -r .description_html)"
@@ -176,7 +178,7 @@ else
 
   sleep "$PAUSE"
   run_json="$($PBOT run create -p "$PROJECT" --version "$PBOT_VERSION" --build "$MARK" \
-    --commit 0000000 --env "pbot e2e" --executed-by me --json 2>"$ERR_FILE" || true)"
+    --commit 0000000 --environment "pbot e2e" --executed-by me --json 2>"$ERR_FILE" || true)"
   # One jq for the two values of the answer. The split is done with the
   # shell and not with `mapfile`: the script has to run on the bash 3.2
   # that macOS ships.

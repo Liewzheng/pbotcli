@@ -51,7 +51,7 @@ Configuration is discovered from several files, highest priority first: `~/.conf
 | 1 | Generic error |
 | 2 | Authentication error (HTTP 401) — and a **usage error** (a flag or an argument clap refuses) |
 | 3 | Resource not found (HTTP 404) |
-| 4 | API error — every other status the server answers (400, 403, 409, 429, 5xx) — and every transport failure |
+| 4 | API error — every other status the server answers (400, 403, 409, 429, 5xx) — and every transport failure. The message carries the HTTP status and the field-level detail of the answer |
 | 5 | Validation error the CLI raised itself (client-side) |
 
 This is the table **every command but `tc` and `run` follows**; those two groups have a mapping
@@ -1092,7 +1092,7 @@ pbot tc update <case> -p <project> [--title <title>] [--purpose <purpose>]
                   [--object-overview <text>] [--priority <P>] [--precondition <text>]
                   [--environment <text>] [--related-feature <text>] [--remarks <text>]
                   [--status <active|void>] [--step "action | expected result"]...
-                  [--steps-file <path>] [--json]
+                  [--steps-file <path>] [--module <module>] [--number <number>] [--json]
 ```
 
 **Options**

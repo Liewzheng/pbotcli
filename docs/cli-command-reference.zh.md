@@ -51,7 +51,7 @@ pbot [全局选项] <命令> [<子命令>] [<参数>...] [选项]
 | 1 | 通用错误 |
 | 2 | 认证失败（HTTP 401）——以及**用法错误**（clap 拒绝的参数或子命令） |
 | 3 | 资源不存在（HTTP 404） |
-| 4 | API 错误——服务端回的其他状态（400、403、409、429、5xx）——以及传输失败 |
+| 4 | API 错误——服务端回的其他状态（400、403、409、429、5xx）——以及传输失败。报错信息里带 HTTP 状态码与应答的字段级明细 |
 | 5 | CLI 自己抛出的校验错误（客户端侧） |
 
 这张表是**除 `tc` 与 `run` 以外所有命令**遵循的；这两个命令组有自己的映射，本节末尾的表给出了
@@ -1031,7 +1031,7 @@ pbot tc update <case> -p <project> [--title <title>] [--purpose <purpose>]
                   [--object-overview <text>] [--priority <P>] [--precondition <text>]
                   [--environment <text>] [--related-feature <text>] [--remarks <text>]
                   [--status <active|void>] [--step "操作 | 预期结果"]...
-                  [--steps-file <path>] [--json]
+                  [--steps-file <path>] [--module <module>] [--number <number>] [--json]
 ```
 
 **选项**

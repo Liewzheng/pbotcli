@@ -141,7 +141,7 @@ sent when no content is given).
 | Method | Path | Notes |
 |---|---|---|
 | GET / POST | `/api/v1/workspaces/{ws}/projects/{project_id}/test-case-modules/` | The registry of the module codes (POST body `{code, description?}`). The code is 2 to 6 uppercase letters, unique in the project |
-| GET | `/api/v1/workspaces/{ws}/projects/{project_id}/test-cases/` | List (paginated). Query: `module`, `priority`, `issue`, `status`, `search` |
+| GET | `/api/v1/workspaces/{ws}/projects/{project_id}/test-cases/` | List (paginated). Query: `module`, `priority`, `issue`, `status`, `search`, `limit`, `cursor` |
 | GET / POST | `/api/v1/workspaces/{ws}/projects/{project_id}/test-cases/` | Create — body `{module, title, purpose, object_overview, priority, preconditions, environment, related_feature?, remarks?, status?, steps?}`. **The number of the case is assigned by the server**, and the six header fields above are refused when they are missing |
 | GET / PATCH / DELETE | `/api/v1/workspaces/{ws}/projects/{project_id}/test-cases/{id}/` | Detail / update / delete. The number and the module of a case cannot be changed |
 | GET / PUT | `/api/v1/workspaces/{ws}/projects/{project_id}/test-cases/{id}/steps/` | The step table. `PUT` replaces it **as a whole** — body `{steps: [{action, expected_result}]}` |
@@ -152,7 +152,7 @@ sent when no content is given).
 
 | Method | Path | Notes |
 |---|---|---|
-| GET / POST | `/api/v1/workspaces/{ws}/projects/{project_id}/test-runs/` | List (paginated; query `status`, `run_date`) / create — body `{run_date?, version_number, build_number, commit_hash, environment, executed_by?, retest_of?}`. **The number of the batch is assigned by the server** from its day |
+| GET / POST | `/api/v1/workspaces/{ws}/projects/{project_id}/test-runs/` | List (paginated; query `status`, `run_date`, `limit`, `cursor`) / create — body `{run_date?, version_number, build_number, commit_hash, environment, executed_by?, retest_of?}`. **The number of the batch is assigned by the server** from its day |
 | GET | `/api/v1/workspaces/{ws}/projects/{project_id}/test-runs/{run_id}/` | Detail — the header, the case records, their steps and their files |
 | POST | `/api/v1/workspaces/{ws}/projects/{project_id}/test-runs/{run_id}/cases/` | Add cases — body `{test_case_ids: [uuid…]}`. The server **snapshots** every case; a case that is already in the batch is refused with `duplicate_case_number` (409) |
 | GET / PATCH / DELETE | `/api/v1/workspaces/{ws}/projects/{project_id}/test-runs/{run_id}/cases/{case_id}/` | One case record. `PATCH` writes the conclusion and the fields around it — body `{conclusion?, evidence?, remarks?, actual_result_summary?, na_reason?, na_criteria_source?, manual_executor?, manual_condition?}` |
