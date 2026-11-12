@@ -14,6 +14,9 @@ PBOT="${PBOT:-pbot}"
 PAUSE="${PAUSE:-4}"          # seconds between calls (rate-limit buffer)
 MARK="pbot-e2e-$$"           # unique marker for cleanup
 FAILURES=0
+# The scratch file holds the error of the last command, so a failure says
+# why it failed instead of only naming the step.
+ERR_FILE="$(mktemp)"
 
 say()  { printf '\n== %s\n' "$*"; }
 ok()   { printf '   ok: %s\n' "$*"; }
@@ -28,6 +31,7 @@ cleanup() {
         "$PBOT" wi delete "$id" -p "$PROJECT" >/dev/null 2>&1 || true
         sleep "$PAUSE"
       done
+  rm -f "$ERR_FILE"
 }
 trap cleanup EXIT
 
@@ -72,14 +76,15 @@ $PBOT attachment attach "$id" -f "$png" -p "$PROJECT" --json >/dev/null 2>&1 && 
 
 say "inline image (-i) on update"
 sleep "$PAUSE"
-# The file was attached under the same name one step ago, and the CLI
-# refuses a duplicate name on purpose — --force is the documented way
-# through, and this is the step that proves the inline image works.
-$PBOT wi update "$id" -p "$PROJECT" -i "$png" --force --json >/dev/null 2>&1 \
+# A file of its own name: the CLI refuses a duplicate attachment name on
+# purpose, and this step is not about that refusal.
+inline_png="/tmp/$MARK-inline.png"
+python3 -c "import base64,sys;open(sys.argv[1],'wb').write(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='))" "$inline_png"
+$PBOT wi update "$id" -p "$PROJECT" -i "$inline_png" --json >/dev/null 2>&1 \
   && ok "inline img" || die "inline img"
 html="$($PBOT wi show "$id" --no-comments --no-cache --json 2>/dev/null | jq -r .description_html)"
 grep -q '<img ' <<<"$html" && ok "inline img in the description" || die "inline img"
-rm -f "$png"
+rm -f "$png" "$inline_png"
 
 say "verify attachment uploaded"
 sleep "$PAUSE"
@@ -98,17 +103,20 @@ up="$($PBOT attachment ls "$id" -p "$PROJECT" --no-cache --json 2>/dev/null | jq
 #
 # The module code is 2 to 6 UPPERCASE letters, so the pid and a random number
 # are spelled out in letters: two smoke runs never fight over the same code.
-# The sum is taken modulo 26^5, so the code never grows past five letters
-# (plus the E) whatever the pid_max of the machine is.
+# The sum is taken modulo 26^4, so the code never grows past four letters
+# (plus the E), and the padding keeps it away from the two-letter end of the
+# rule whatever the pid of the run is.
 letters_of() {
   local n=$1 out="" alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-  while [[ $n -gt 0 && ${#out} -lt 5 ]]; do
+  while [[ $n -gt 0 && ${#out} -lt 4 ]]; do
     out="${alphabet:$(( n % 26)):1}$out"
     n=$(( n / 26 ))
   done
   printf '%s' "${out:-A}"
 }
-MODULE_CODE="E$(letters_of $(( ($$ + RANDOM) % (26 ** 5) )))"
+seed_letters="$(letters_of $(( ($$ + RANDOM) % (26 ** 4) )))"
+while [[ ${#seed_letters} -lt 3 ]]; do seed_letters="A$seed_letters"; done
+MODULE_CODE="E$seed_letters"
 # The version under test is the version of the binary under test.
 PBOT_VERSION="$("$PBOT" --version | awk '{print $NF}')"
 
@@ -121,15 +129,18 @@ if [[ $probe_rc -eq 3 ]]; then
 elif [[ $probe_rc -ne 0 ]]; then
   # Anything else — a 401, a 429, a transport failure — is a real failure and
   # must not pass as "the feature is not deployed here".
-  die "tc module ls (exit $probe_rc): $probe_out"
+  die "tc module ls (exit $probe_rc): ${probe_out%%$'\n'*}"
 else
   png="/tmp/$MARK-tc.png"
   python3 -c "import base64,sys;open(sys.argv[1],'wb').write(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='))" "$png"
 
   sleep "$PAUSE"
-  $PBOT tc module create -p "$PROJECT" --code "$MODULE_CODE" \
-    --description "pbot e2e $MARK" --json >/dev/null 2>&1 \
-    && ok "module $MODULE_CODE" || die "tc module create"
+  if out="$($PBOT tc module create -p "$PROJECT" --code "$MODULE_CODE" \
+    --description "pbot e2e $MARK" --json 2>"$ERR_FILE")"; then
+    ok "module $MODULE_CODE"
+  else
+    die "tc module create: $(head -n 1 "$ERR_FILE")"
+  fi
 
   sleep "$PAUSE"
   # `|| true` keeps a failed command from killing the script under `set -e`:
@@ -144,27 +155,41 @@ else
     --step "Write the verdict of step 2 | The step record carries the verdict" \
     --step "Write the conclusion of the case | The case record carries the conclusion" \
     --step "Close the batch | The batch is completed" \
-    --json 2>/dev/null || true)"
+    --json 2>"$ERR_FILE" || true)"
   case_number="$(jq -r '.number // empty' <<<"$case_json")"
-  [[ -n "$case_number" ]] && ok "case $case_number" || die "tc create"
+  if [[ -n "$case_number" ]]; then
+    ok "case $case_number"
+  else
+    die "tc create: $(head -n 1 "$ERR_FILE")"
+  fi
 
   sleep "$PAUSE"
   run_json="$($PBOT run create -p "$PROJECT" --version "$PBOT_VERSION" --build "$MARK" \
-    --commit 0000000 --env "pbot e2e" --executed-by me --json 2>/dev/null || true)"
+    --commit 0000000 --env "pbot e2e" --executed-by me --json 2>"$ERR_FILE" || true)"
   # One jq for the two values of the answer.
   mapfile -t run_fields < <(jq -r '(.id // ""), (.number // "")' <<<"$run_json")
   run_uuid="${run_fields[0]:-}"
   run_number="${run_fields[1]:-}"
-  [[ -n "$run_uuid" ]] && ok "batch $run_number" || die "run create"
+  if [[ -n "$run_uuid" ]]; then
+    ok "batch $run_number"
+  else
+    die "run create: $(head -n 1 "$ERR_FILE")"
+  fi
 
   sleep "$PAUSE"
-  $PBOT run add "$run_uuid" "$case_number" -p "$PROJECT" --json >/dev/null 2>&1 \
-    && ok "case added to the batch" || die "run add"
+  if out="$($PBOT run add "$run_uuid" "$case_number" -p "$PROJECT" --json 2>"$ERR_FILE")"; then
+    ok "case added to the batch"
+  else
+    die "run add: $(head -n 1 "$ERR_FILE")"
+  fi
 
   sleep "$PAUSE"
-  $PBOT run step "$run_uuid" --case "$case_number" --step 2 --verdict fail \
-    --image "$png" --yes -p "$PROJECT" --json >/dev/null 2>&1 \
-    && ok "step 2 fails with a screenshot" || die "run step"
+  if out="$($PBOT run step "$run_uuid" --case "$case_number" --step 2 --verdict fail \
+    --image "$png" --yes -p "$PROJECT" --json 2>"$ERR_FILE")"; then
+    ok "step 2 fails with a screenshot"
+  else
+    die "run step: $(head -n 1 "$ERR_FILE")"
+  fi
 
   # The evidence of a case hangs on the case: a screenshot of a step does not
   # satisfy the finalize, so this finalize has to be refused.
@@ -177,9 +202,12 @@ else
   fi
 
   sleep "$PAUSE"
-  $PBOT run conclude "$run_uuid" --case "$case_number" --conclusion FAIL \
-    --image "$png" --yes -p "$PROJECT" --json >/dev/null 2>&1 \
-    && ok "conclusion FAIL with the case evidence" || die "run conclude"
+  if out="$($PBOT run conclude "$run_uuid" --case "$case_number" --conclusion FAIL \
+    --image "$png" --yes -p "$PROJECT" --json 2>"$ERR_FILE")"; then
+    ok "conclusion FAIL with the case evidence"
+  else
+    die "run conclude: $(head -n 1 "$ERR_FILE")"
+  fi
 
   # The conclusion is written once: the second write is refused. The batch is
   # still open here, so the refusal names the conclusion — a write after the
@@ -195,8 +223,11 @@ else
   fi
 
   sleep "$PAUSE"
-  $PBOT run finalize "$run_uuid" -p "$PROJECT" --json >/dev/null 2>&1 \
-    && ok "finalize" || die "run finalize"
+  if out="$($PBOT run finalize "$run_uuid" -p "$PROJECT" --json 2>"$ERR_FILE")"; then
+    ok "finalize"
+  else
+    die "run finalize: $(head -n 1 "$ERR_FILE")"
+  fi
 
   # A completed batch is frozen: every later write to it is refused.
   sleep "$PAUSE"

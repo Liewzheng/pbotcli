@@ -54,6 +54,10 @@ Configuration is discovered from several files, highest priority first: `~/.conf
 | 4 | API error — every other status the server answers (400, 403, 409, 429, 5xx) — and every transport failure |
 | 5 | Validation error the CLI raised itself (client-side) |
 
+**The test-case feature (`tc`, `run`) has its own mapping** — a permission failure and a coded
+refusal are two classes of their own there. The table at the end of this section has the split;
+the table above is the one every other command follows.
+
 Two details worth knowing before a script keys on these:
 
 - **A usage error exits 2, the same code as an authentication failure.** A missing required flag, an
@@ -80,7 +84,7 @@ The classes of the test-case feature (`tc`, `run`) in one table:
 | Usage error | 2 | a missing required flag, an unknown flag |
 | Not found | 3 | a case or a batch that no project holds |
 | API / transport | 4 | a 5xx, a connection error, an answer the client cannot read |
-| Validation | 5 | a local check, and every server refusal that carries a stable code |
+| Validation | 5 | a local check, a 400 or a 409 that carries a stable reason code, and a 400 or a 409 that carries none (a conflict of this API is a refusal of the write) |
 
 ## COMMANDS
 
@@ -1089,6 +1093,25 @@ pbot tc update <case> -p <project> [--title <title>] [--purpose <purpose>]
                   [--steps-file <path>] [--json]
 ```
 
+**Options**
+
+| Option | Description |
+|---|---|
+| `-p, --project <project>` | Project name, identifier, or UUID (required). |
+| `--title <title>` | New title. |
+| `--purpose <purpose>` | New purpose. |
+| `--object-overview <text>` | New object overview. |
+| `--priority <priority>` | New priority: `P0`, `P1`, `P2`, `P3`. |
+| `--precondition <text>` | New preconditions. Alias `--preconditions`. |
+| `--environment <text>` | New environment. Alias `--env`. |
+| `--related-feature <text>` | New related feature. |
+| `--remarks <text>` | New remarks. |
+| `--status <status>` | New status: `active` or `void`. |
+| `--step "action \| expected result"` | The whole step table, one step per "action \| expected result" (repeatable). The table is replaced as a whole. |
+| `--steps-file <path>` | A file with the whole step table (a JSON array, or one "action \| expected result" per line). |
+| `--module <module>` | **Refused** (exit 5): the module of a case cannot be changed. The flag exists so the refusal names the field the caller tried to change. |
+| `--number <number>` | **Refused** (exit 5): the number of a case is assigned by the server and is part of the record of every run. |
+
 **The number and the module of a case cannot be changed.** The number is bound to the module and
 is part of the record of every run, and the server keeps both. `--module` and `--number` exist so
 the refusal names the field the caller tried to change; either one is refused locally (exit 5)
@@ -1105,6 +1128,15 @@ Read or replace the step table of a test case.
 pbot tc steps <case> -p <project> [--step "action | expected result"]...
                   [--steps-file <path>] [--json]
 ```
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `-p, --project <project>` | Project name, identifier, or UUID (required). |
+| `--step "action \| expected result"` | One step (repeatable). |
+| `--steps-file <path>` | A file with the whole step table (a JSON array, or one "action \| expected result" per line). |
+| `--json` | Print JSON to stdout instead of a table on stderr. |
 
 Without a step the table is read; with steps the **whole** table is replaced.
 
@@ -1385,8 +1417,9 @@ pbot run summary <run> -p <project> [--json]
 
 **The four counts are not a partition of the total.** A case that failed on one step and was never
 executed on another is counted twice, so `fail` and `manual` may both count the same case: a batch
-with one concluded `FAIL` case reports `total: 1`, `fail: 1`, `manual: 1`. Do not add the counts
-up and compare the sum with `total`.
+with one concluded `FAIL` case reports `total: 1`, `fail: 1`, `manual: 1` — the overlap is what
+"not a partition" means, and it is what the server returns. Do not add the counts up and compare
+the sum with `total`.
 
 ---
 

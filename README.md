@@ -205,9 +205,11 @@ Four details the flow above depends on:
   refused with `conclusion_is_final`; the same write **after** the finalize is refused with
   `run_completed`, because a completed batch is frozen and the freeze is checked first.
 
-The exit codes of the feature: `0` success, `2` authentication **or** permission **or** a usage
-error, `3` not found, `4` API or transport failure, `5` validation — both the local checks and
-every server refusal that carries a stable code.
+The exit codes **of this feature** — the two groups have their own mapping, so a permission
+failure and a coded refusal are classes of their own: `0` success, `2` authentication **or**
+permission **or** a usage error, `3` not found, `4` API or transport failure, `5` validation —
+both the local checks and every server refusal that carries a stable code. The other commands
+follow the general table of the reference, where a 403 is exit 4.
 
 `docs/cli-command-reference.md` has every command and flag of both groups, including the
 evidence rule, the edges of `--run-date` (UTC), and the shapes of Markdown the local pre-check and
