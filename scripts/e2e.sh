@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Live end-to-end smoke for pbot against a real Plane instance.
 # Covers: create → markdown comment → state change → attachment upload →
-# inline image embed → cleanup. Requires ~/.plane_api credentials and a
-# reachable instance; paces calls to stay under the instance rate limit.
+# inline image embed → test case → test run → cleanup. Requires ~/.plane_api
+# credentials and a reachable instance; paces calls to stay under the instance
+# rate limit.
 #
 # Usage: scripts/e2e.sh [-p PROJECT]   (default project: PLANECLI)
 
@@ -16,6 +17,7 @@ FAILURES=0
 
 say()  { printf '\n== %s\n' "$*"; }
 ok()   { printf '   ok: %s\n' "$*"; }
+skip() { printf '   skip: %s\n' "$*"; }
 die()  { printf '   FAIL: %s\n' "$*" >&2; FAILURES=$((FAILURES + 1)); }
 
 cleanup() {
@@ -79,6 +81,105 @@ say "verify attachment uploaded"
 sleep "$PAUSE"
 up="$($PBOT attachment ls "$id" -p "$PROJECT" --no-cache --json 2>/dev/null | jq '[.[] | select(.is_uploaded==true)] | length')"
 [[ "$up" -ge 2 ]] && ok "attachments uploaded=$up" || die "attachments uploaded=$up"
+
+# --- the test-case feature -------------------------------------------------
+#
+# A case and a batch are the two halves of the feature. The instance has to
+# serve them; an instance without the endpoints skips the whole block with a
+# clear message instead of failing the smoke.
+#
+# The batch is addressed by its **uuid**: the number of a batch is resolved by
+# reading the list of the batches, and a list that carries a batch without an
+# executor cannot be deserialized — the uuid skips that read entirely.
+#
+# The module code is 2 to 6 UPPERCASE letters, so the pid is spelled out in
+# letters: two smoke runs never fight over the same code.
+letters_of() {
+  local n=$1 out=""
+  while [[ $n -gt 0 && ${#out} -lt 5 ]]; do
+    out="$(printf '%c' $(( n % 26 + 65 )))$out"
+    n=$(( n / 26 ))
+  done
+  printf '%s' "${out:-A}"
+}
+MODULE_CODE="E$(letters_of $$)"
+
+say "test case: module, case, batch, verdict, conclusion, finalize"
+if ! $PBOT tc module ls -p "$PROJECT" --no-cache --json >/dev/null 2>&1; then
+  skip "the instance serves no test-case endpoints — the tc/run smoke is skipped"
+else
+  png="/tmp/$MARK-tc.png"
+  python3 -c "import base64;open('$png','wb').write(base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='))"
+
+  sleep "$PAUSE"
+  $PBOT tc module create -p "$PROJECT" --code "$MODULE_CODE" \
+    --description "pbot e2e $MARK" --json >/dev/null 2>&1 \
+    && ok "module $MODULE_CODE" || die "tc module create"
+
+  sleep "$PAUSE"
+  case_json="$($PBOT tc create -p "$PROJECT" --module "$MODULE_CODE" \
+    --title "pbot-e2e $MARK" \
+    --purpose "The smoke test of the test-case feature." \
+    --object-overview "The tc and run command groups." \
+    --priority P2 \
+    --precondition "The module code is registered in the project." \
+    --environment "The instance the smoke test runs against." \
+    --step "Write the verdict of step 2 | The step record carries the verdict" \
+    --step "Write the conclusion of the case | The case record carries the conclusion" \
+    --step "Close the batch | The batch is completed" \
+    --json 2>/dev/null)"
+  case_number="$(jq -r '.number // empty' <<<"$case_json")"
+  [[ -n "$case_number" ]] && ok "case $case_number" || die "tc create"
+
+  sleep "$PAUSE"
+  run_json="$($PBOT run create -p "$PROJECT" --version 1.6.0 --build "$MARK" \
+    --commit 0000000 --env "pbot e2e" --executed-by me --json 2>/dev/null)"
+  run_uuid="$(jq -r '.id // empty' <<<"$run_json")"
+  run_number="$(jq -r '.number // empty' <<<"$run_json")"
+  [[ -n "$run_uuid" ]] && ok "batch $run_number" || die "run create"
+
+  sleep "$PAUSE"
+  $PBOT run add "$run_uuid" "$case_number" -p "$PROJECT" --json >/dev/null 2>&1 \
+    && ok "case added to the batch" || die "run add"
+
+  sleep "$PAUSE"
+  $PBOT run step "$run_uuid" --case "$case_number" --step 2 --verdict fail \
+    --image "$png" --yes -p "$PROJECT" --json >/dev/null 2>&1 \
+    && ok "step 2 fails with a screenshot" || die "run step"
+
+  # The evidence of a case hangs on the case: a screenshot of a step does not
+  # satisfy the finalize, so this finalize has to be refused.
+  sleep "$PAUSE"
+  fin_out="$($PBOT run finalize "$run_uuid" -p "$PROJECT" --json 2>&1)" && fin_rc=0 || fin_rc=$?
+  if [[ $fin_rc -eq 5 ]] && grep -q 'evidence_missing' <<<"$fin_out"; then
+    ok "finalize without case evidence is refused (evidence_missing)"
+  else
+    die "finalize without case evidence (exit $fin_rc)"
+  fi
+
+  sleep "$PAUSE"
+  $PBOT run conclude "$run_uuid" --case "$case_number" --conclusion FAIL \
+    --image "$png" --yes -p "$PROJECT" --json >/dev/null 2>&1 \
+    && ok "conclusion FAIL with the case evidence" || die "run conclude"
+
+  sleep "$PAUSE"
+  $PBOT run finalize "$run_uuid" -p "$PROJECT" --json >/dev/null 2>&1 \
+    && ok "finalize" || die "run finalize"
+
+  # The conclusion is written once: the second write is refused.
+  sleep "$PAUSE"
+  again="$($PBOT run conclude "$run_uuid" --case "$case_number" --conclusion PASS \
+    --evidence "a second conclusion write" --yes -p "$PROJECT" --json 2>&1)" && again_rc=0 || again_rc=$?
+  if [[ $again_rc -ne 0 ]] && grep -q 'conclusion_is_final' <<<"$again"; then
+    ok "the second conclusion write is refused (conclusion_is_final)"
+  else
+    die "the second conclusion write (exit $again_rc)"
+  fi
+
+  rm -f "$png"
+  printf '   note: the case %s and the batch %s stay in the project —\n' "$case_number" "$run_number"
+  printf '         the test-case feature has no delete for a member of the project.\n'
+fi
 
 say "result"
 if [[ "$FAILURES" -eq 0 ]]; then echo "E2E PASS"; else echo "E2E FAIL ($FAILURES)"; exit 1; fi

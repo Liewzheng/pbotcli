@@ -1,19 +1,19 @@
 ---
 name: pbot
-description: "Manage Plane.so through the pbot / pbotcli CLI — work items, projects, cycles/sprints, modules, labels, states, documents, intake queue, comments, relations. Use when the user mentions Plane, pbot, pbotcli, planecli, or a work-item identifier like ABC-123, or asks about tasks, sprints, or backlogs in a project where Plane is the tracker."
+description: "Manage Plane.so through the pbot / pbotcli CLI — work items, projects, cycles/sprints, modules, labels, states, documents, intake queue, comments, relations, test cases (tc) and test runs (run). Use when the user mentions Plane, pbot, pbotcli, planecli, a work-item identifier like ABC-123, or asks about tasks, sprints, backlogs, test cases or test batches in a project where Plane is the tracker."
 allowed-tools: Bash(pbot *, pbotcli *)
 metadata:
   author: pbotcli maintainers
-  version: "1.5.1"
+  version: "1.6.0"
 ---
 
 # pbot — pbotcli
 
-> **Skill version: 1.5.1 — must match `pbot --version`.** A stale skill is
+> **Skill version: 1.6.0 — must match `pbot --version`.** A stale skill is
 > worse than no skill: every command and flag listed below may have been
 > added, renamed or removed since this was written. Before answering any
 > `pbot …` question, verify the version with `pbot --version`. If it differs
-> from `1.5.1`, this document is stale:
+> from `1.6.0`, this document is stale:
 >
 > - End users: `brew upgrade pbotcli` (or `brew install Liewzheng/tap/pbotcli`
 >   the first time), or the prebuilt installer from the Releases page, then
@@ -33,8 +33,8 @@ metadata:
 both and they behave identically, so this document uses the shorter name throughout — a `pbotcli`
 example is the same command. Every command group
 (whoami, configure, project, wi, comment, relations, attachment, doc, intake, label, state,
-module, cycle, user, cache), fuzzy resolution, `--json` dual output, caching, markdown input
-and inline images.
+module, cycle, user, cache, tc, run), fuzzy resolution, `--json` dual output, caching, markdown
+input and inline images.
 
 Install and update the released CLI from the Homebrew tap — never from a checkout:
 
@@ -242,6 +242,109 @@ for a long body, keep it out of the shell and pass the file instead
 (`--body-md "$(cat body.md)"`). For binary content like a PDF, link the
 asset via `attachment ls` + a Markdown link with the uuid as the
 destination rather than trying to inline the file.
+
+## Test cases
+
+`pbot tc` manages the **test cases** of a project, `pbot run` manages the **batches** that
+execute them. A case is named by its number (`TC-<module code>-<NNN>`), a batch by its number
+(`RUN-<YYYYMMDD>-<NN>`) — **the server assigns both numbers**, the CLI never builds one.
+
+Two rules shape the whole feature: a verdict (of a step) and a conclusion (of a case) are written
+**once** — the server refuses a second write with `conclusion_is_final`, and **no flag overwrites
+a verdict** — and a **completed** batch is **frozen**: every later write to it is refused with
+`run_completed`.
+
+```bash
+# 1. register the module code — it is the prefix of the case number
+pbot tc module create -p "Project" --code CLI --description "The command line" --json
+pbot tc module ls -p "Project" --json
+
+# 2. create the case: six mandatory header fields and at least one step
+#    (a step is written as "action | expected result")
+pbot tc create -p "Project" --module CLI \
+  --title "Log in with a valid account" \
+  --purpose "Check the login path of the web UI" \
+  --object-overview "The login form of the web UI" \
+  --priority P1 \
+  --precondition "The account exists and is active" \
+  --environment "Windows 10, Chrome 120" \
+  --step "Open the login page | The form is shown" \
+  --step "Log in with the valid account | The dashboard is shown" \
+  --json
+
+# read it back
+pbot tc ls -p "Project" --json
+pbot tc show TC-CLI-001 -p "Project" --json
+pbot tc steps TC-CLI-001 -p "Project" --json        # the step rows, not the case number
+pbot tc issues TC-CLI-001 -p "Project" --add ABC-123 --json
+
+# 3. create the batch — --executed-by defaults to "me"
+pbot run create -p "Project" --version 1.6.0 --build 42 --commit abc1234 --env bench --json
+
+# 4. add the case to the batch
+pbot run add RUN-20261112-01 TC-CLI-001 -p "Project" --json
+
+# 5. write the verdict of step 2 with a screenshot
+pbot run step RUN-20261112-01 --case TC-CLI-001 --step 2 --verdict fail \
+  --image ./shot.png --yes -p "Project" --json
+
+# 6. write the conclusion of the case — with evidence ON THE CASE
+pbot run conclude RUN-20261112-01 --case TC-CLI-001 --conclusion FAIL \
+  --evidence "the button stayed grey" --yes -p "Project" --json
+
+# 7. close the batch, read the summary
+pbot run finalize RUN-20261112-01 -p "Project" --json
+pbot run summary RUN-20261112-01 -p "Project" --json
+```
+
+**Three rules the flow depends on.**
+
+- **`--yes` is required off a terminal.** A verdict and a conclusion are written once, so both
+  commands ask before they write: on a terminal they prompt on stderr, and a script that is not on
+  a terminal has to pass `--yes`. Without it the command refuses before any request and nothing
+  is written.
+- **The evidence hangs on the case, not on the step.** The server counts case-level evidence
+  only: a case-level text (`--evidence` / `--evidence-file`) **or** a case-level file (`--image`).
+  A screenshot of a **step** does **not** count — the finalize answers `evidence_missing` with the
+  path `cases[TC-CLI-001].evidence` and names the case.
+- **A refused write prints the stable code of the server** (`conclusion_is_final`,
+  `evidence_missing`, `run_executed_by_missing`, `duplicate_case_number`, …) next to the sentence
+  of the server. Key on the code, never on the prose — it is the first word of the first line of
+  the error.
+
+**Exit codes of the feature:** `0` success, `2` authentication **or** permission **or** a usage
+error (a missing or an unknown flag), `3` not found, `4` API or transport failure, `5` validation —
+both the local checks and every server refusal that carries a stable code.
+
+**Read `--actual` / `--actual-file` as pass-through:** the measured value reaches the server as it
+was typed, byte for byte — no Markdown conversion, no rewriting. `--actual-file` is the way to
+send a multi-line value.
+
+**The flags of the two groups** (every one of them is in
+[references/command-reference.md](references/command-reference.md), and `pbot tc … --help` /
+`pbot run … --help` is the truth):
+
+| Command | Flags beyond `-p` and `--json` |
+|---|---|
+| `tc ls` | `--module`, `--priority`, `--issue`, `--status`, `--search`, `-l/--limit` |
+| `tc create` | `--module`, `--title`, `--purpose`, `--object-overview`, `--priority`, `--precondition`, `--environment`, `--related-feature`, `--remarks`, `--status`, `--step`, `--steps-file` |
+| `tc update` | the same field flags, plus `--module` and `--number` — both **refused** (the number is bound to the module) |
+| `tc steps` | `--step`, `--steps-file` |
+| `tc issues` | `-a/--add`, `-r/--remove` |
+| `tc module create` | `--code`, `-d/--description` |
+| `run ls` | `--status`, `--run-date`, `-l/--limit` |
+| `run create` | `--version`, `--build`, `--commit`, `--environment`, `--run-date`, `--retest-of`, `--executed-by` |
+| `run step` | `--case`, `--step`, `--verdict`, `--actual`, `--actual-file`, `--image`, `-y/--yes` |
+| `run conclude` | `--case`, `--conclusion`, `--evidence`, `--evidence-file`, `--image`, `--remarks`, `--actual-result-summary`, `--na-reason`, `--na-criteria-source`, `--manual-executor`, `--manual-condition`, `-y/--yes` |
+
+`--steps-file` hands the whole step table over at once: a JSON array
+(`[{"action": "…", "expected": "…"}]`) or one `action | expected result` per line.
+
+**Two edges worth knowing.** `--run-date` is **UTC** and is frozen after the creation: an
+operator at UTC+8 who creates a batch between 00:00 and 08:00 local time gets the previous UTC
+day in `run_date`. And the four counts of `run summary` are **not a partition** of the total — a
+case that failed on one step and was never executed on another is counted twice, so `fail` and
+`manual` may count the same case.
 
 ## Updating tasks — etiquette
 

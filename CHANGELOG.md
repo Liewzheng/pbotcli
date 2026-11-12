@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- `pbot tc` manages the **test cases** of a project: `tc ls` (filters `--module`, `--priority`,
+  `--issue`, `--status`, `--search`), `tc show`, `tc create`, `tc update`, `tc steps`, `tc issues`
+  (`--add` / `--remove`), `tc delete`, and `tc module ls` / `tc module create` for the registry of
+  the module codes. A case needs six mandatory header fields — `--title`, `--purpose`,
+  `--object-overview`, `--priority`, `--precondition`, `--environment` — and at least one step,
+  written as `--step "action | expected result"` or handed over as a whole table with
+  `--steps-file` (a JSON array, or one `action | expected result` per line). The server assigns
+  the number of a case; the number and the module of a case cannot be changed afterwards.
+- `pbot run` manages the **test runs (batches)** of a project: `run ls` (filters `--status`,
+  `--run-date`), `run show`, `run create` (`--version`, `--build`, `--commit`, `--environment`,
+  `--run-date`, `--retest-of`, `--executed-by`), `run add`, `run step`, `run conclude`, `run remove`,
+  `run finalize` and `run summary`. `run step` writes the verdict and the measured value of one
+  step (`--verdict`, `--actual`, `--actual-file`, `--image`), `run conclude` writes the conclusion
+  of one case (`--conclusion`, `--evidence`, `--evidence-file`, `--image`, `--remarks`,
+  `--actual-result-summary`, `--na-reason`, `--na-criteria-source`, `--manual-executor`,
+  `--manual-condition`). Both ask before they write — a terminal is prompted, a script passes
+  `--yes` — and no flag overwrites a verdict that is already recorded. The measured value and the
+  evidence reach the server as they were typed, byte for byte.
+- The refusals of the test-case feature name the **stable code** the server answered with
+  (`conclusion_is_final`, `evidence_missing`, `run_executed_by_missing`, `duplicate_case_number`,
+  `run_completed`, `module_code_format`, …) next to the sentence of the server, so a script can
+  tell a validation failure (exit 5) from a permission failure (exit 2) or a transport failure
+  (exit 4) without reading prose.
+
+### Documentation
+- The README and the agent skill gained a **Test cases** section with the end-to-end flow —
+  register a module, create a case, create a batch, add the case, write a failing step with a
+  screenshot, write the case conclusion with case-level evidence, close the batch, and see the
+  second conclusion write refused — and the command reference documents every command and flag of
+  both groups, the exit-code classes, the evidence rule (a screenshot of a *step* does not satisfy
+  the finalize; the evidence hangs on the case), the UTC `--run-date` edge, and the shapes of
+  Markdown the local pre-check and the server do not read the same way.
+- AGENTS.md now states plainly that a green local `make check` is **necessary but not sufficient**:
+  the local gate covers fmt, clippy and the tests on one platform, and the platform-sensitive
+  paths are only exercised by the CI matrix on Linux, macOS and Windows.
+
 ## [1.5.1] - 2026-10-15
 
 ### Changed

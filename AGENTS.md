@@ -50,10 +50,17 @@ the release.
 CI (`.github/workflows/ci.yml`) runs the same three checks on every push and pull request —
 `cargo fmt --all -- --check`, `cargo clippy --locked --workspace --all-targets -- -D warnings`,
 and `cargo test --locked --workspace` — so `make check` catches most CI failures before they are
-pushed. The two differences are deliberate: CI passes `--locked`, so a `Cargo.toml` change that
-was never reflected in a committed `Cargo.lock` fails there and passes locally (the local gate
-must stay usable mid-change), and CI runs on macOS and Windows as well, where config paths and
-permission handling are platform-sensitive.
+pushed. **A green local `make check` is necessary but not sufficient.** The local gate covers
+fmt, clippy and the tests on **one platform** — the one you are standing on. Platform-sensitive
+code — config paths, permission handling, filesystem and path quirks — is only exercised by the
+CI matrix on Linux, macOS and Windows, so a test that depends on the platform can pass locally
+and fail on the other two. That is not hypothetical: a pull request whose Linux leg was green
+failed on the Windows leg over a test that wrote to `/dev/null`. Read the three CI legs before
+asking for a merge, and treat a platform-specific failure as a real one.
+
+The two differences from the local gate are deliberate: CI passes `--locked`, so a `Cargo.toml`
+change that was never reflected in a committed `Cargo.lock` fails there and passes locally (the
+local gate must stay usable mid-change), and CI runs the matrix on macOS and Windows as well.
 
 Single test: `cargo test --workspace <name>` (e.g. `cargo test -p pbotcli-resolve resolve_project`),
 or `cargo run --bin pbot -- wi ls` for the CLI without installing it. Edition 2024, rustfmt

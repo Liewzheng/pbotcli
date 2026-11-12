@@ -49,10 +49,32 @@ pbot [全局选项] <命令> [<子命令>] [<参数>...] [选项]
 |---|---|
 | 0 | 成功 |
 | 1 | 通用错误 |
-| 2 | 认证失败 |
+| 2 | 认证失败**或权限不足**——以及**用法错误**（clap 拒绝的参数或子命令） |
 | 3 | 资源不存在 |
-| 4 | API 错误（含 HTTP 状态码与字段级明细） |
-| 5 | 校验错误（客户端侧） |
+| 4 | API 错误（含 HTTP 状态码与字段级明细）——以及传输失败 |
+| 5 | 校验错误（客户端侧，**或**服务端给出了原因码的拒绝） |
+
+写脚本读退出码之前，有两点需要先知道：
+
+- **用法错误也返回 2，和认证失败、权限不足是同一个码。** 缺少必填参数、写了不存在的参数、
+  子命令缺少位置参数，这些都由 clap 在发出任何请求之前拒绝；错误信息和用法说明都写到
+  **stderr**，所以 stdout 仍然是干净的（`--json 2>/dev/null` 得到的是空输出，而不是半截 JSON）。
+  因此码 2 表示「CLI 或凭证没能走到那一步」，它本身**不区分**密码写错还是参数写错。
+- **服务端给出了原因码的拒绝返回 5，不是 4。** 携带稳定原因码的 `400` 或 `409`
+  （`invalid_test_case`、`conclusion_is_final`、`evidence_missing` 等）属于调用方可以据此行动的
+  校验失败；不带原因码的 `400` / `409` 同样返回 5，因为这个 API 的冲突是对这次写入的拒绝，
+  不是传输故障。剩下的才是 4：传输失败，或者服务端回了一个该功能无法识别的应答。
+
+测试用例功能（`tc`、`run`）的错误分类汇总：
+
+| 类别 | 退出码 | 例子 |
+|---|---|---|
+| 成功 | 0 | 写入成功、读取成功 |
+| 认证 / 权限 | 2 | `401`、`403`——服务主体在该项目上没有授权 |
+| 用法错误 | 2 | 缺少必填参数、未知参数 |
+| 资源不存在 | 3 | 项目里没有这个用例或这个批次 |
+| API / 传输 | 4 | 5xx、连接失败、客户端读不懂的应答 |
+| 校验 | 5 | 本地检查，以及服务端带稳定原因码的每一次拒绝 |
 
 ## 命令索引
 
@@ -73,6 +95,8 @@ pbot [全局选项] <命令> [<子命令>] [<参数>...] [选项]
 | [`intake`](#pbot-intake) | 收件箱队列。 |
 | [`doc`](#pbot-doc) | 文档 / 页面。 |
 | [`attachment`](#pbot-attachment) | 工作项附件（别名：`attachments`）。 |
+| [`tc`](#pbot-tc) | 项目的测试用例。 |
+| [`run`](#pbot-run) | 项目的测试批次。 |
 
 ---
 
@@ -883,6 +907,445 @@ pbot attachment attach <issue> -f <file> [-p <project>] [--force] [--json]
 ```
 pbot attachment list <issue> [-p <project>] [--json]
 ```
+
+---
+
+## pbot tc
+
+项目的**测试用例**。用例由编号命名（`TC-<模块码>-<NNN>`），编号**由服务端分配**——CLI 从不自己
+拼编号。模块码是编号的前缀，所以要先注册（`pbot tc module create`）；服务端拒绝模块未在项目
+中注册的用例。
+
+一条用例有**六个必填的头部字段**——标题、目的、被测对象、优先级、前置条件、环境——以及**至少
+一步**。CLI 同样要求这六项，所以它的 `--help` 说的是服务端真正会拒绝的东西。
+
+每个读命令的 `--json` 走 stdout、表格走 stderr；每个写命令打印服务端分配的编号。被拒绝的写入
+会打印服务端给出的**稳定原因码**（`invalid_test_case`、`module_code_format`、`module_code_taken`、
+`expected_is_unjudgeable` 等），并附上服务端的那句话，每个问题一行，各自标出它属于哪条用例、
+哪一步。**请按原因码判断，不要按中文散文判断**——原因码是错误第一行的第一个词，也是服务端承诺
+会保持不变的那部分。
+
+### pbot tc list
+
+列出项目的测试用例。
+
+**别名** `ls`
+
+```
+pbot tc list -p <project> [--module <code>] [--priority <P>] [--issue <工作项>]
+                  [--status <active|all>] [--search <文本>] [-l <limit>] [--json]
+```
+
+**选项**
+
+| 选项 | 说明 |
+|---|---|
+| `-p, --project <project>` | 项目名称、标识符或 UUID（必填）。 |
+| `--module <module>` | 按模块码或模块 UUID 过滤。 |
+| `--priority <priority>` | 按优先级过滤：`P0`、`P1`、`P2`、`P3`。 |
+| `--issue <issue>` | 按已关联的工作项过滤（标识符或 UUID）。 |
+| `--status <status>` | 按状态过滤：`active`（服务端默认）或 `all`。 |
+| `--search <text>` | 按编号或标题过滤。 |
+| `-l, --limit <limit>` | 最多显示多少条（默认 50）。 |
+
+### pbot tc show
+
+显示一条用例：头部字段、步骤、工作项关联。
+
+```
+pbot tc show <case> -p <project> [--json]
+```
+
+`<case>` 可以是编号（`TC-CLI-001`）、UUID 或标题。
+
+### pbot tc create
+
+创建测试用例。编号由服务端分配。
+
+```
+pbot tc create -p <project> --module <code> --title <title> --purpose <purpose>
+                  --object-overview <text> --priority <P> --precondition <text>
+                  --environment <text> [--related-feature <text>] [--remarks <text>]
+                  [--status <active|void>] [--step "操作 | 预期结果"]...
+                  [--steps-file <path>] [--json]
+```
+
+**选项**
+
+| 选项 | 说明 |
+|---|---|
+| `-p, --project <project>` | 项目名称、标识符或 UUID（必填）。 |
+| `--module <module>` | 用例所属的模块码（编号的前缀）。 |
+| `--title <title>` | 用例标题。**服务端必填。** |
+| `--purpose <purpose>` | 这条用例验证什么。**服务端必填。** |
+| `--object-overview <text>` | 被测对象是什么。**服务端必填。** |
+| `--priority <priority>` | `P0`、`P1`、`P2`、`P3`。**服务端必填。** |
+| `--precondition <text>` | 执行前必须成立的条件。**服务端必填。** 别名 `--preconditions`。 |
+| `--environment <text>` | 环境与被测版本。**服务端必填。** 别名 `--env`。 |
+| `--related-feature <text>` | 用例所属的功能。 |
+| `--remarks <text>` | 自由备注。 |
+| `--status <status>` | `active`（默认）或 `void`。 |
+| `--step "操作 \| 预期结果"` | 一步（可重复）。 |
+| `--steps-file <path>` | 存放整张步骤表的文件。 |
+
+**步骤的格式是 `操作 | 预期结果`**——操作、竖线、预期结果，写在一行里。两半都必须有；没有竖线
+或有一半是空的行，会在发出任何请求之前就被本地拒绝（退出码 5）。
+
+`--steps-file` 用两种形态之一给出整张步骤表：
+
+- **JSON 数组**：`[{"action": "打开页面", "expected": "列表已显示"}]`（第二个键也接受
+  `expected_result`）；
+- **纯文本行**：每行一个 `操作 | 预期结果`。空行和以 `#` 开头的行会被跳过。
+
+两种形态喂给同一张表。表是**整张**表：创建时写入给它的每一步，之后带步骤的 `tc steps` 会把表
+整体替换（见下）。
+
+**示例**
+
+```bash
+pbot tc create -p PLANECLI --module CLI \
+  --title "用有效账号登录" \
+  --purpose "检查 Web UI 的登录路径" \
+  --object-overview "Web UI 的登录表单" \
+  --priority P1 \
+  --precondition "账号存在且处于启用状态" \
+  --environment "Windows 10、Chrome 120" \
+  --step "打开登录页 | 表单已显示" \
+  --step "用有效账号登录 | 控制台已显示" \
+  --json
+```
+
+### pbot tc update
+
+更新测试用例。所有字段可选；没给的字段保持原样。
+
+```
+pbot tc update <case> -p <project> [--title <title>] [--purpose <purpose>]
+                  [--object-overview <text>] [--priority <P>] [--precondition <text>]
+                  [--environment <text>] [--related-feature <text>] [--remarks <text>]
+                  [--status <active|void>] [--step "操作 | 预期结果"]...
+                  [--steps-file <path>] [--json]
+```
+
+**用例的编号和模块都不能改。** 编号绑定在模块上，并且是每一条执行记录的组成部分，服务端两者
+都保留。`--module` 与 `--number` 这两个参数存在，只是为了让拒绝信息能点名调用方想改的那个
+字段；两者都会在发出任何请求之前被本地拒绝（退出码 5），所以不需要回滚任何东西。
+
+`--step` / `--steps-file` 替换的是**整张**步骤表：每一步都要重新传一遍，服务端会丢掉不在
+列表里的那些行。
+
+### pbot tc steps
+
+读取或替换一条用例的步骤表。
+
+```
+pbot tc steps <case> -p <project> [--step "操作 | 预期结果"]...
+                  [--steps-file <path>] [--json]
+```
+
+不带步骤就是读表；带步骤就**整体替换**这张表。
+
+> **打印的是步骤表，不是用例编号。** `pbot tc steps TC-CLI-001` 打印的是表里的行——stderr 上是
+> `Step`、`Action`、`Expected result` 三列的表格，stdout 上是同样内容的 JSON 数组——**而不是**
+> `TC-CLI-001` 这个编号。用例编号由 `pbot tc show` 打印，步骤表由 `pbot tc steps` 打印。
+
+### pbot tc issues
+
+列出、增加或删除一条用例的工作项关联。
+
+```
+pbot tc issues <case> -p <project> [-a <工作项>] [-r <工作项>] [--json]
+```
+
+**选项**
+
+| 选项 | 说明 |
+|---|---|
+| `-a, --add <work item>` | 关联一个工作项（标识符或 UUID）。 |
+| `-r, --remove <work item>` | 解除一个工作项的关联（标识符或 UUID）。 |
+
+`--add` 与 `--remove` 互斥；两个都不给就是列出关联。
+
+### pbot tc delete
+
+删除一条测试用例。**破坏性操作**：服务端只允许项目管理员删除用例，拒绝时带服务端自己的句子。
+
+```
+pbot tc delete <case> -p <project> [--json]
+```
+
+### pbot tc module list
+
+列出项目已注册的模块码。
+
+**别名** `ls`
+
+```
+pbot tc module list -p <project> [--json]
+```
+
+### pbot tc module create
+
+注册一个模块码。模块码的规则归服务端管：2 到 6 个大写字母，项目内唯一。被拒绝的模块码会带上
+服务端自己的原因码（`module_code_format`、`module_code_taken`）和它的句子。
+
+```
+pbot tc module create -p <project> --code <code> [-d <description>] [--json]
+```
+
+**选项**
+
+| 选项 | 说明 |
+|---|---|
+| `-p, --project <project>` | 项目名称、标识符或 UUID（必填）。 |
+| `--code <code>` | 模块码，例如 `CLI`。 |
+| `-d, --description <text>` | 这个模块覆盖什么。 |
+
+---
+
+## pbot run
+
+项目的**测试批次（batch）**。一个批次是一次连续的用例执行。批次由编号命名
+（`RUN-<YYYYMMDD>-<NN>`），编号**由服务端分配**——CLI 从不自己拼，也从不写编号。
+
+这个功能的两条规则决定了整组命令的形状：
+
+- **步骤判定**（步骤的 ✔ / ✘）和**用例结论**（用例的判定）都**只写一次**。服务端对第二次写入
+  回 `conclusion_is_final`，写错了的做法是作废该记录、在新批次里重跑。所以这两个写命令都会先
+  问一句，而且**本组没有任何参数能覆盖已经记录的判定**。
+- **已完成**的批次被冻结：对它的每一次写入都会被 `run_completed` 拒绝，CLI 也不会自己重试这种
+  拒绝。
+
+### pbot run list
+
+列出项目的批次。
+
+**别名** `ls`
+
+```
+pbot run list -p <project> [--status <status>] [--run-date <YYYY-MM-DD>] [-l <limit>] [--json]
+```
+
+**选项**
+
+| 选项 | 说明 |
+|---|---|
+| `-p, --project <project>` | 项目名称、标识符或 UUID（必填）。 |
+| `--status <status>` | 按状态过滤：`draft`、`in_progress`、`completed` 或 `all`。 |
+| `--run-date <date>` | 按执行日期过滤（`YYYY-MM-DD`）。 |
+| `-l, --limit <limit>` | 最多显示多少条（默认 50）。 |
+
+### pbot run show
+
+显示一个批次：头部、它里面的用例、这些用例的步骤和文件。
+
+```
+pbot run show <run> -p <project> [--json]
+```
+
+`<run>` 可以是编号（`RUN-20261109-01`）或 UUID。
+
+### pbot run create
+
+创建批次。编号由服务端分配。
+
+```
+pbot run create -p <project> --version <version> --build <build> --commit <commit>
+                  --environment <env> [--run-date <YYYY-MM-DD>] [--retest-of <run>]
+                  [--executed-by <who>] [--json]
+```
+
+**选项**
+
+| 选项 | 说明 |
+|---|---|
+| `-p, --project <project>` | 项目名称、标识符或 UUID（必填）。 |
+| `--version <version>` | 被测版本（批次创建后冻结）。 |
+| `--build <build>` | 被测构建号（批次创建后冻结）。 |
+| `--commit <commit>` | 被测提交号（批次创建后冻结）。 |
+| `--environment <env>` | 批次执行所在的环境。别名 `--env`。 |
+| `--run-date <YYYY-MM-DD>` | 执行日期（默认：**UTC** 的今天）。 |
+| `--retest-of <run>` | 本批次重测的那个批次（编号或 UUID）。 |
+| `--executed-by <who>` | 谁执行了这个批次：`me`（默认）、姓名或 UUID。 |
+
+之所以要 `--version`、`--build`、`--commit`、`--environment`，是因为服务端拒绝关闭一个不带这些
+字段的批次，而本组没有命令可以事后补上。
+
+**`--executed-by` 默认是 `me`**；在服务主体令牌下，`me` 解析到该主体的影子 bot 成员——和 CLI
+其他地方用的是同一个 `me`。批次需要执行人：没有执行人的批次关不掉，服务端会用
+`run_executed_by_missing` 拒绝 finalize。
+
+**`--run-date` 是 UTC，而且创建之后就冻结。** 默认值是 *UTC 的今天*，不是操作者所在时区的今天：
+UTC+8 的操作者在当地 00:00 到 08:00 之间创建批次，`run_date` 拿到的是**前一个 UTC 日**，批次
+编号也带着那一天（`RUN-<YYYYMMDD>-<NN>`）。需要当地日期就显式传 `--run-date`。批次的日期之后
+改不了——服务端会用 `run_date_fixed` 拒绝这次写入。
+
+**`--retest-of` 把批次连到它重测的那个批次。** 重测只能在原批次所属的项目里进行，且不能成环：
+服务端拒绝指向别的项目的链接（`retest_of_project_mismatch`）、指向自己的链接（`retest_of_self`），
+以及会成环的链接（`retest_of_cycle`）。列表的 `Retest of` 列把这条链接显示为
+`retest of RUN-20261109-01`——**英文**，与 Web UI 的「补测」不同。
+
+### pbot run add
+
+把用例加入批次。
+
+```
+pbot run add <run> <case>... -p <project> [--json]
+```
+
+服务端会为加入的每条用例**做一份快照**，所以之后修改用例不会改写批次记录下来的内容。已经在批次
+里的用例会被 `duplicate_case_number` 拒绝；CLI 会先读批次，在发请求之前就拒绝重复项，并点名是
+哪条用例。
+
+### pbot run step
+
+写入一步的判定与实测值。
+
+```
+pbot run step <run> --case <case> --step <n> --verdict <verdict>
+                  [--actual <markdown>] [--actual-file <path>] [--image <path>]
+                  [--yes] -p <project> [--json]
+```
+
+**选项**
+
+| 选项 | 说明 |
+|---|---|
+| `--case <case>` | 批次里的那条用例（`TC-CLI-007`）。 |
+| `--step <n>` | 用例里的第几步（1、2、3 …）。 |
+| `--verdict <verdict>` | `pass`、`fail` 或 `unset`——没执行过的步骤是 `unset`。`N/A` 是用例的结论，不是步骤的判定，本地就会拒绝。 |
+| `--actual <markdown>` | 实测值。 |
+| `--actual-file <path>` | 存放实测值的文件。 |
+| `--image <path>` | 步骤的截图。 |
+| `-y, --yes` | 确认写入（命令不在终端上时必须给）。 |
+
+**实测值原样到达服务端——不转换、不改写。** `--actual` 逐字发送这个字符串；`--actual-file`
+逐字节发送文件内容，换行也照原样。两者都不在途中做 Markdown 转换：文件里是什么，服务端就存
+什么。
+
+**不在终端上时必须给 `--yes`。** 步骤判定只写一次，所以命令在写之前会问：终端上它在 stderr 上
+提示（`… — write it? [y/N]`），不在终端上的脚本必须传 `--yes`。既没有 `--yes` 又没有终端时，
+命令在发出任何请求之前就拒绝（退出码 5），什么都不会写。
+
+**步骤的截图不满足 finalize。** 用例的证据挂在用例本身上——见下面的
+[用例的证据规则](#用例的证据规则)。
+
+### pbot run conclude
+
+写入批次里一条用例的结论。
+
+```
+pbot run conclude <run> --case <case> --conclusion <conclusion>
+                      [--evidence <markdown>] [--evidence-file <path>] [--image <path>]
+                      [--remarks <text>] [--actual-result-summary <text>]
+                      [--na-reason <text>] [--na-criteria-source <text>]
+                      [--manual-executor <who>] [--manual-condition <text>]
+                      [--yes] -p <project> [--json]
+```
+
+**选项**
+
+| 选项 | 说明 |
+|---|---|
+| `--case <case>` | 批次里的那条用例（`TC-CLI-007`）。 |
+| `--conclusion <conclusion>` | `PASS`、`FAIL`、`N/A` 或 `MANUAL`（`NA` 也接受，会归一成 `N/A`）。 |
+| `--evidence <markdown>` | 用例的证据。 |
+| `--evidence-file <path>` | 存放用例证据的文件（字节原样到达服务端）。 |
+| `--image <path>` | 用例的截图——只有这一张截图就足够当证据。 |
+| `--remarks <text>` | 自由备注。 |
+| `--actual-result-summary <text>` | 用例的一句话现象（汇总会显示它）。 |
+| `--na-reason <text>` | 用例为何不适用（`N/A` 的用例需要它）。 |
+| `--na-criteria-source <text>` | `N/A` 用例的判定依据来自哪里。 |
+| `--manual-executor <who>` | 谁手工执行的（`MANUAL` 的用例需要它）。 |
+| `--manual-condition <text>` | 在什么条件下手工执行的。 |
+| `-y, --yes` | 确认写入（命令不在终端上时必须给）。 |
+
+用例结论**只写一次**：服务端对第二次写入回 `conclusion_is_final`，而且**没有任何参数能覆盖
+它**。写错了的做法是作废该记录、在新批次里重跑（`pbot run create --retest-of <run>`）。
+
+### pbot run remove
+
+把一条用例从批次里移出。
+
+```
+pbot run remove <run> --case <case> -p <project> [--json]
+```
+
+已经带判定或带结论的记录会留在批次里：服务端用 `run_case_removal_after_execution` 拒绝这次移出。
+
+### pbot run finalize
+
+关闭批次：服务端对它跑一遍有效性规则。
+
+```
+pbot run finalize <run> -p <project> [--json]
+```
+
+被拒绝的 finalize 会列出它找到的**每一个**问题，每个一行，各自标出属于哪条用例、哪一步：
+
+```
+Error: invalid_batch
+conclusion_invalid (case TC-CLI-001): 结论必须是 PASS、FAIL、N/A 或需人工。
+evidence_missing (case TC-CLI-001): 缺少必填项：证据。
+Hint: Every reason above names the case and the step it belongs to; fix them and finalize again. …
+```
+
+批次保持打开，直到每个问题都被修好。关闭的批次被**冻结**——之后对它的每一次写入都会被
+`run_completed` 拒绝。
+
+### pbot run summary
+
+批次的汇总：四个计数与偏差项。
+
+```
+pbot run summary <run> -p <project> [--json]
+```
+
+**这四个计数不是对总数的划分。** 一条用例在一步上失败、在另一条上从未执行，会被数两次，所以
+`fail` 和 `manual` 可能数的是同一条用例：一个只有一条 `FAIL` 结论的批次会报 `total: 1`、
+`fail: 1`、`manual: 1`。不要把计数加起来再跟 `total` 比。
+
+---
+
+## 用例的证据规则
+
+服务端拒绝关闭一个用例没有证据的批次，而且它只数**用例级**的证据：一段非空的**用例级文本**
+**或者**至少一个**用例级附件**。**步骤**上的截图挂在步骤记录上，所以**不算数**——finalize 会回
+`evidence_missing`，路径是 `cases[TC-CLI-001].evidence`，并点名那条用例。
+
+写用例证据有两种方式：`--evidence` / `--evidence-file`（文本）和 `--image`（文件），任何一种
+单独就够：
+
+```bash
+# 文本
+pbot run conclude RUN-20261109-01 --case TC-CLI-007 --conclusion FAIL --evidence "按钮一直是灰的" --yes
+# 只有一张截图，不写文字
+pbot run conclude RUN-20261109-01 --case TC-CLI-007 --conclusion FAIL --image ./shot.png --yes
+```
+
+CLI 读这段文本的方式和服务端一致——只有占位符的值（`—`、`TBD`、`待补充` 等）不算带了文本，
+只有图片的值（`![](shot.png)`）也不算，因为图片是文件，不是句子。CLI 打印的提示**只是警告**：
+它不会拒绝任何写入，最终仍然由服务端拒绝批次并点名用例。
+
+### 残留：两种读法不一致的写法
+
+本地预检查和服务端对某些 Markdown 写法的读法并不一致。这个差别**永远只是警告**——CLI 不会因此
+拒绝写入，决定权始终在服务端——但知道这些写法的测试者，不会被一条服务端并不认可的警告吓到，
+也不会对一条 CLI 没有提醒的拒绝感到意外。
+
+**CLI 读成有文本、服务端读成没有文本**（CLI 不吭声，服务端拒绝 finalize）：占位符外面套着
+块级标记——`> TBD`、`# TBD`、`- TBD`、`1. TBD`、`* TBD`；链接里的占位符——`[TBD](url)`；
+`~~TBD~~`、`&nbsp;TBD`；带 info string 的围栏代码块——` ```text TBD ``` `；`~~~~` 围栏；以及链接
+引用定义——`[ref]: shot.png`。
+
+**CLI 读成没有文本、服务端读成有文本**（CLI 会警告，服务端接受）：未闭合的强调——`**TBD`、
+`***TBD`、`TBD**`、`** ![](x.png) **`。
+
+### 孤儿上传
+
+`--image` 会**先上传并绑定文件，然后再发写入请求**，所以被服务端拒绝的写入可能留下一个已经绑在
+记录上的附件——文件在记录上，判定不在。它**永远不会改变判定**：被拒绝的写入照样被拒绝，记录
+保留它原来的判定。文件可以在下一次尝试时重传，结论不行。
 
 ---
 
