@@ -495,14 +495,13 @@ pbot run summary RUN -p PROJECT
 | `--image` | A screenshot. On `run step` it belongs to the step; on `run conclude` it is the evidence of the case |
 | `--yes` / `-y` | Confirm the write. Needed when the command is not on a terminal — otherwise the command asks, and refuses (exit 5) without a terminal |
 | `--version`, `--build`, `--commit`, `--environment` | The tested build of the batch. Frozen once the batch is created |
-| `--run-date` | The day of the execution. **UTC**, and frozen after the creation |
+| `--run-date` | The day of the execution. **UTC**, and frozen after the creation. On `run ls` it filters the batches of that day |
 | `--retest-of` | The batch this one re-tests. A re-test runs in the project of its original and never in a ring |
 | `--executed-by` | Who executed the batch: `me` (the default), a name, or a UUID |
 | `--na-reason`, `--na-criteria-source` | Required by the server for a `N/A` case |
 | `--manual-executor`, `--manual-condition` | Required by the server for a `MANUAL` case |
 | `--actual-result-summary` | The one-line phenomenon of the case (the summary shows it) |
 | `--status` (of `run ls`) | `draft`, `in_progress`, `completed`, or `all` |
-| `--run-date` (of `run ls`) | Filter by the day of the execution |
 
 Two rules shape the whole group: a verdict and a conclusion are written **once** — the server
 refuses a second write with `conclusion_is_final`, and **no flag overwrites a verdict** — and a

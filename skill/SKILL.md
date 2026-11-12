@@ -330,8 +330,8 @@ exit 4.
 was typed, byte for byte — no Markdown conversion, no rewriting. `--actual-file` is the way to
 send a multi-line value.
 
-**The flags of the two groups** (the reference has every one of them, and
-`pbot tc … --help` / `pbot run … --help` is the truth):
+**The flags the flow below needs** — the reference has every flag of every command of the two
+groups, and `pbot tc … --help` / `pbot run … --help` is the truth:
 
 | Command | The flags the flow needs |
 |---|---|

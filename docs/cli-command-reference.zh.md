@@ -964,6 +964,13 @@ pbot tc list -p <project> [--module <code>] [--priority <P>] [--issue <工作项
 pbot tc show <case> -p <project> [--json]
 ```
 
+**选项**
+
+| 选项 | 说明 |
+|---|---|
+| `-p, --project <project>` | 项目名称、标识符或 UUID（必填）。 |
+| `--json` | 把 JSON 打到 stdout，而不是把表格打到 stderr。 |
+
 `<case>` 可以是编号（`TC-CLI-001`）、UUID 或标题。
 
 ### pbot tc create
@@ -1112,6 +1119,13 @@ pbot tc issues <case> -p <project> [-a <工作项>] [-r <工作项>] [--json]
 pbot tc delete <case> -p <project> [--json]
 ```
 
+**选项**
+
+| 选项 | 说明 |
+|---|---|
+| `-p, --project <project>` | 项目名称、标识符或 UUID（必填）。 |
+| `--json` | 把 JSON 打到 stdout，而不是把表格打到 stderr。 |
+
 ### pbot tc module list
 
 列出项目已注册的模块码。
@@ -1121,6 +1135,13 @@ pbot tc delete <case> -p <project> [--json]
 ```
 pbot tc module list -p <project> [--json]
 ```
+
+**选项**
+
+| 选项 | 说明 |
+|---|---|
+| `-p, --project <project>` | 项目名称、标识符或 UUID（必填）。 |
+| `--json` | 把 JSON 打到 stdout，而不是把表格打到 stderr。 |
 
 ### pbot tc module create
 
@@ -1181,6 +1202,13 @@ pbot run list -p <project> [--status <status>] [--run-date <YYYY-MM-DD>] [-l <li
 pbot run show <run> -p <project> [--json]
 ```
 
+**选项**
+
+| 选项 | 说明 |
+|---|---|
+| `-p, --project <project>` | 项目名称、标识符或 UUID（必填）。 |
+| `--json` | 把 JSON 打到 stdout，而不是把表格打到 stderr。 |
+
 `<run>` 可以是编号（`RUN-20261109-01`）或 UUID。
 
 服务端对某些字段回 `null` 的批次（没有执行人、用例已删除的记录）照样能读：`null` 读成空字符串，
@@ -1235,6 +1263,13 @@ UTC+8 的操作者在当地 00:00 到 08:00 之间创建批次，`run_date` 拿�
 ```
 pbot run add <run> <case>... -p <project> [--json]
 ```
+
+**选项**
+
+| 选项 | 说明 |
+|---|---|
+| `-p, --project <project>` | 项目名称、标识符或 UUID（必填）。 |
+| `--json` | 把 JSON 打到 stdout，而不是把表格打到 stderr。 |
 
 服务端会为加入的每条用例**做一份快照**，所以之后修改用例不会改写批次记录下来的内容。已经在批次
 里的用例会被 `duplicate_case_number` 拒绝；CLI 会先读批次，在发请求之前就拒绝重复项，并点名是
@@ -1318,6 +1353,14 @@ pbot run conclude <run> --case <case> --conclusion <conclusion>
 pbot run remove <run> --case <case> -p <project> [--json]
 ```
 
+**选项**
+
+| 选项 | 说明 |
+|---|---|
+| `--case <case>` | 批次里的那条用例（`TC-CLI-007`）。 |
+| `-p, --project <project>` | 项目名称、标识符或 UUID（必填）。 |
+| `--json` | 把 JSON 打到 stdout，而不是把表格打到 stderr。 |
+
 已经带判定或带结论的记录会留在批次里：服务端用 `run_case_removal_after_execution` 拒绝这次移出。
 
 ### pbot run finalize
@@ -1327,6 +1370,13 @@ pbot run remove <run> --case <case> -p <project> [--json]
 ```
 pbot run finalize <run> -p <project> [--json]
 ```
+
+**选项**
+
+| 选项 | 说明 |
+|---|---|
+| `-p, --project <project>` | 项目名称、标识符或 UUID（必填）。 |
+| `--json` | 把 JSON 打到 stdout，而不是把表格打到 stderr。 |
 
 被拒绝的 finalize 会列出它找到的**每一个**问题，每个一行，各自标出属于哪条用例、哪一步：
 
@@ -1347,6 +1397,13 @@ Hint: Every reason above names the case and the step it belongs to; fix them and
 ```
 pbot run summary <run> -p <project> [--json]
 ```
+
+**选项**
+
+| 选项 | 说明 |
+|---|---|
+| `-p, --project <project>` | 项目名称、标识符或 UUID（必填）。 |
+| `--json` | 把 JSON 打到 stdout，而不是把表格打到 stderr。 |
 
 **这四个计数不是对总数的划分。** 一条用例在一步上失败、在另一条上从未执行，会被数两次，所以
 `fail` 和 `manual` 可能数的是同一条用例：一个只有一条 `FAIL` 结论的批次会报 `total: 1`、

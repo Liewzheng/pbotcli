@@ -1024,6 +1024,13 @@ pbot tc show <case> -p <project> [--json]
 
 `<case>` is the number (`TC-CLI-001`), a UUID, or the title.
 
+**Options**
+
+| Option | Description |
+|---|---|
+| `-p, --project <project>` | Project name, identifier, or UUID (required). |
+| `--json` | Print JSON to stdout instead of a table on stderr. |
+
 ### pbot tc create
 
 Create a test case. The number is assigned by the server.
@@ -1175,6 +1182,13 @@ refusal carries the server's own sentence.
 pbot tc delete <case> -p <project> [--json]
 ```
 
+**Options**
+
+| Option | Description |
+|---|---|
+| `-p, --project <project>` | Project name, identifier, or UUID (required). |
+| `--json` | Print JSON to stdout instead of a table on stderr. |
+
 ### pbot tc module list
 
 List the registered module codes of a project.
@@ -1184,6 +1198,13 @@ List the registered module codes of a project.
 ```
 pbot tc module list -p <project> [--json]
 ```
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `-p, --project <project>` | Project name, identifier, or UUID (required). |
+| `--json` | Print JSON to stdout instead of a table on stderr. |
 
 ### pbot tc module create
 
@@ -1249,6 +1270,13 @@ pbot run show <run> -p <project> [--json]
 
 `<run>` is the number (`RUN-20261109-01`) or a UUID.
 
+**Options**
+
+| Option | Description |
+|---|---|
+| `-p, --project <project>` | Project name, identifier, or UUID (required). |
+| `--json` | Print JSON to stdout instead of a table on stderr. |
+
 A batch the server answers with a `null` for — no executor, a case whose test case was deleted —
 still reads: the `null` is the empty string, the shape every other absent field of a record
 carries.
@@ -1306,6 +1334,13 @@ Add test cases to a batch.
 ```
 pbot run add <run> <case>... -p <project> [--json]
 ```
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `-p, --project <project>` | Project name, identifier, or UUID (required). |
+| `--json` | Print JSON to stdout instead of a table on stderr. |
 
 The server **snapshots** every case that is added, so a later edit of the case never rewrites what
 the batch recorded. A case that is already in the batch is refused with `duplicate_case_number`;
@@ -1393,6 +1428,14 @@ Take a case out of a batch.
 pbot run remove <run> --case <case> -p <project> [--json]
 ```
 
+**Options**
+
+| Option | Description |
+|---|---|
+| `--case <case>` | The case of the batch (`TC-CLI-007`). |
+| `-p, --project <project>` | Project name, identifier, or UUID (required). |
+| `--json` | Print JSON to stdout instead of a table on stderr. |
+
 A record that already carries a verdict or a conclusion stays in the batch: the server refuses the
 removal with `run_case_removal_after_execution`.
 
@@ -1403,6 +1446,13 @@ Close a batch: the server runs the validity rules over it.
 ```
 pbot run finalize <run> -p <project> [--json]
 ```
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `-p, --project <project>` | Project name, identifier, or UUID (required). |
+| `--json` | Print JSON to stdout instead of a table on stderr. |
 
 A refused finalize lists **every** problem it found, one per line, each with the case and the step
 it belongs to:
@@ -1424,6 +1474,13 @@ The summary of a batch: the four counts and the deviations.
 ```
 pbot run summary <run> -p <project> [--json]
 ```
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `-p, --project <project>` | Project name, identifier, or UUID (required). |
+| `--json` | Print JSON to stdout instead of a table on stderr. |
 
 **The four counts are not a partition of the total.** A case that failed on one step and was never
 executed on another is counted twice, so `fail` and `manual` may both count the same case: a batch

@@ -144,10 +144,22 @@ MODULE_CODE="E$seed_letters"
 PBOT_VERSION="$("$PBOT" --version | awk '{print $NF}')"
 
 say "test case: module, case, batch, verdict, conclusion, finalize"
+# The probe cannot tell a project that does not exist from a route the
+# instance does not serve: both answer 404, and both exit 3. The project is
+# checked **first** — it has to resolve — so a typo in the name fails the
+# smoke instead of passing as a skip. The skip is then only about the
+# feature: the project resolves and the test-case route is the one that
+# answers 404.
+project_rc=0
+project_out="$($PBOT project show "$PROJECT" --no-cache --json 2>&1)" || project_rc=$?
+if [[ $project_rc -ne 0 ]]; then
+  die "project $PROJECT (exit $project_rc): ${project_out%%$'\n'*}"
+fi
 probe_rc=0
 probe_out="$($PBOT tc module ls -p "$PROJECT" --no-cache --json 2>&1)" || probe_rc=$?
 if [[ $probe_rc -eq 3 ]]; then
-  # A 404: the instance does not serve the test-case routes at all.
+  # A 404 on the route itself: the instance does not serve the test-case
+  # endpoints at all.
   skip "the instance serves no test-case endpoints — the tc/run smoke is skipped"
 elif [[ $probe_rc -ne 0 ]]; then
   # Anything else — a 401, a 429, a transport failure — is a real failure and
