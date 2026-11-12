@@ -5,6 +5,9 @@
 # credentials and a reachable instance; paces calls to stay under the instance
 # rate limit.
 #
+# Needs: bash (3.2 is enough), python3, jq, awk, and the credentials of a
+# real instance.
+#
 # Usage: scripts/e2e.sh [-p PROJECT]   (default project: PLANECLI)
 
 set -euo pipefail
@@ -20,7 +23,8 @@ ERR_FILE="$(mktemp)"
 # The generated images live in a directory of their own: the name of the
 # file has to end in .png (the CLI reads the type of an image from its
 # extension), and a predictable path in a shared /tmp is not worth the risk.
-TMP_DIR="$(mktemp -d "/tmp/${MARK}-XXXXXX")"
+TMP_ROOT="${TMPDIR:-/tmp}"
+TMP_DIR="$(mktemp -d "$TMP_ROOT/${MARK}-XXXXXX")"
 
 say()  { printf '\n== %s\n' "$*"; }
 ok()   { printf '   ok: %s\n' "$*"; }

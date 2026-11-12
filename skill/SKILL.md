@@ -322,7 +322,9 @@ pbot run summary RUN-20261112-01 -p "Project" --json
 
 **Exit codes of the feature:** `0` success, `2` authentication **or** permission **or** a usage
 error (a missing or an unknown flag), `3` not found, `4` API or transport failure, `5` validation —
-both the local checks and every server refusal that carries a stable code.
+both the local checks and every server refusal that carries a stable code. The two groups have a
+mapping of their own; the other commands follow the general table of the reference, where a 403 is
+exit 4.
 
 **Read `--actual` / `--actual-file` as pass-through:** the measured value reaches the server as it
 was typed, byte for byte — no Markdown conversion, no rewriting. `--actual-file` is the way to
