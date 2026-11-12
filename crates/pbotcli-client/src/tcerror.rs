@@ -682,6 +682,16 @@ mod tests {
     }
 
     #[test]
+    fn a_wrapper_whose_reason_has_no_remedy_keeps_the_remedy_of_the_wrapper() {
+        // The reason is unknown to the table: the wrapper answers.
+        let body = r#"{"error":"The payload is not valid.","code":"invalid_payload","errors":[
+            {"code":"a_reason_the_table_does_not_know","message":"…","field":"conclusion"}]}"#;
+        let err = map_testcase_error(400, body);
+        let hint = err.hint().expect("a hint");
+        assert!(hint.contains("Check the payload"), "{hint}");
+    }
+
+    #[test]
     fn a_wrapper_without_a_reason_keeps_its_own_remedy() {
         // Nothing to be more specific about: the wrapper answers.
         let body = r#"{"error":"The payload is not valid.","code":"invalid_payload","errors":[]}"#;

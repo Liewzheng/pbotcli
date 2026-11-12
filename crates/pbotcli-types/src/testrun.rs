@@ -376,6 +376,15 @@ mod tests {
     }
 
     #[test]
+    fn a_field_that_is_not_a_string_at_all_is_still_refused() {
+        // Only the `null` is tolerated: a number where the field is a
+        // string is a drift of the shape, and the client has to see it.
+        let raw = r#"{"id": "r1", "executed_by": 42}"#;
+        let err = serde_json::from_str::<TestRun>(raw).unwrap_err();
+        assert!(err.to_string().contains("string"), "{err}");
+    }
+
+    #[test]
     fn reads_a_batch_whose_executor_the_server_answers_with_null() {
         // The shape of the live instance: a batch created without an
         // executor carries an explicit `null`, and `#[serde(default)]`
